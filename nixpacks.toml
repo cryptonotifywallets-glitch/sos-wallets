@@ -1,9 +1,0 @@
-# Nixpacks config for Railway — SOS WALLETS
-# https://nixpacks.io/docs/configuration/file
-#
-# The root package.json delegates build + start to the backend/ directory.
-# Nixpacks auto-detects Node.js and runs: npm install → npm run build → npm start
-
-# better-sqlite3 may need build tools for native compilation fallback
-[phases.setup]
-nixPkgs = ["python3", "gcc", "gnumake"]

@@ -30,7 +30,7 @@
 - [x] api-client.js frontend module
 - [x] Test all endpoints locally
 
-## Phase 5 — Admin System (IN PROGRESS)
+## Phase 5 — Admin System (COMPLETE)
 - [x] Add is_admin column + admin bootstrap to server.js
 - [x] Add adminAuth middleware + is_admin in JWT
 - [x] Add all admin API routes (stats, users, toggle-admin, transactions, email-log, broadcast)
@@ -39,3 +39,11 @@
 - [x] Test admin.html in browser (login, stats, tabs, broadcast all work)
 - [x] Commit & push admin system to GitHub (commit 6e74ef2 pushed)
 - [x] Inform user of admin credentials
+
+## Phase 6 — Deployment to Render.com (COMPLETE)
+- [x] Create render.yaml blueprint (one-click deploy)
+- [x] Create Procfile (Railway/Heroku compat)
+- [x] Update server.js: PORT env, DB_PATH env, production URL display, ephemeral FS warning
+- [x] Update README with full deploy instructions + Gmail SMTP + API table
+- [x] Verify frontend auto-detects same-origin backend (works on Render)
+- [x] Commit & push (commit 2c8985a pushed)
