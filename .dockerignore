@@ -1,0 +1,12 @@
+node_modules
+backend/node_modules
+**/node_modules
+*.db
+*.db-wal
+*.db-shm
+.env
+.git
+.gitignore
+*.md
+todo.md
+.screenshots
