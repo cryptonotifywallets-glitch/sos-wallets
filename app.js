@@ -1501,6 +1501,62 @@ async function sendTestEmail(){
     toast('error','Network Error',e.message);
   }finally{ if(btn) btn.disabled=false; }
 }
+/* Diagnostic: runs a full EmailJS connection check and shows exact problems + fixes */
+async function diagnoseEmailJS(){
+  const cfg=getEmailJSConfig();
+  const st=document.getElementById('emailjs-status');
+  const lines=[];
+  lines.push('🔍 EmailJS Diagnostic — '+new Date().toLocaleString());
+  lines.push('──────────────────────────────');
+  lines.push('This site origin: '+location.origin);
+  lines.push('');
+  if(!cfg||!cfg.serviceId||!cfg.templateId||!cfg.publicKey){
+    lines.push('❌ Config incomplete or not saved.');
+    lines.push('   serviceId: '+(cfg&&cfg.serviceId?cfg.serviceId:'(missing)'));
+    lines.push('   templateId: '+(cfg&&cfg.templateId?cfg.templateId:'(missing)'));
+    lines.push('   publicKey: '+(cfg&&cfg.publicKey?cfg.publicKey:'(missing)'));
+    lines.push('');
+    lines.push('👉 Fix: Fill all fields in Email Delivery and click Save.');
+    if(st){ st.className='emailjs-status err'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
+    toast('error','Config Incomplete','Fill all EmailJS fields and save first.');
+    return;
+  }
+  lines.push('✅ Config saved:');
+  lines.push('   Service ID:  '+cfg.serviceId);
+  lines.push('   Template ID: '+cfg.templateId);
+  lines.push('   Public Key:  '+cfg.publicKey);
+  lines.push('   From Name:   '+(cfg.fromName||'(none — will use SOS WALLETS)'));
+  lines.push('');
+  lines.push('⏳ Sending test request to EmailJS API…');
+  if(st){ st.className='emailjs-status info'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
+  const res=await deliverEmailViaEmailJS(cfg.testTo||'cryptonotifywallets@gmail.com','SOS WALLETS Diagnostic','Diagnostic test.','<p>Diagnostic test.</p>');
+  lines.push('');
+  if(res.ok){
+    lines.push('🎉 SUCCESS! EmailJS accepted the request.');
+    lines.push('   The email should arrive at '+(cfg.testTo||'cryptonotifywallets@gmail.com')+' shortly.');
+    lines.push('   If it does NOT arrive, check: spam folder, or EmailJS Activity log at dashboard.emailjs.com → Activity.');
+    if(st){ st.className='emailjs-status ok'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
+    toast('success','EmailJS Working','Test request accepted. Check inbox + EmailJS Activity log.');
+  } else {
+    lines.push('❌ FAILED — '+res.reason);
+    if(res.raw) lines.push('   Raw response: '+res.raw);
+    lines.push('');
+    lines.push('COMMON FIXES:');
+    lines.push('1. Allowed Domains: Go to dashboard.emailjs.com → Account → Security.');
+    lines.push('   If "Allowed Domains" is enabled, ADD this origin: '+location.origin);
+    lines.push('2. Non-browser block: On that same Security page, if "Allow API access');
+    lines.push('   outside the browser" is OFF, that can block some requests — try enabling it.');
+    lines.push('3. Template fields: In your EmailJS template set:');
+    lines.push('     To Email → {{to_email}}   Subject → {{subject}}');
+    lines.push('     From Name → {{from_name}}  Content → {{html}}');
+    lines.push('     (ALL must be DOUBLE braces {{ }})');
+    lines.push('4. Activity log: dashboard.emailjs.com → Activity shows every send attempt');
+    lines.push('   with the exact error — check there for the real reason.');
+    if(st){ st.className='emailjs-status err'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
+    toast('error','EmailJS Failed', res.reason);
+  }
+}
+
 /* Core: send a real email via EmailJS. Returns true on success. */
 async function deliverEmailViaEmailJS(toEmail, subject, textBody, htmlBody){
   const cfg=getEmailJSConfig();
@@ -1515,7 +1571,22 @@ async function deliverEmailViaEmailJS(toEmail, subject, textBody, htmlBody){
     });
     if(r.ok) return {ok:true};
     const txt=await r.text();
-    return {ok:false,reason:'emailjs-error:'+r.status+':'+txt};
+    /* Translate common EmailJS errors into plain-English guidance */
+    let friendly=txt;
+    if(r.status===403 && /non-browser/i.test(txt)){
+      friendly='EmailJS blocked this request. Go to dashboard.emailjs.com → Account → Security and either (a) enable "Allow API access outside browser" OR (b) add this site\'s domain ('+location.origin+') to the Allowed Domains list.';
+    } else if(r.status===403){
+      friendly='EmailJS rejected this (403). Check Allowed Domains at dashboard.emailjs.com → Account → Security — add '+location.origin+' to the list.';
+    } else if(r.status===404){
+      friendly='Template ID not found ('+cfg.templateId+'). Open the template in EmailJS, go to its Settings tab, and copy the real Template ID (starts with template_).';
+    } else if(r.status===422){
+      friendly='Recipient address issue (422). In your EmailJS template, set "To Email" to {{to_email}} (double braces).';
+    } else if(r.status===429){
+      friendly='Rate limit hit (429). You may have exceeded EmailJS free tier (200/month). Wait or upgrade.';
+    } else if(r.status===401){
+      friendly='Invalid Public Key (401). Re-check the Public Key in Email Delivery settings.';
+    }
+    return {ok:false,reason:'emailjs-error:'+r.status+':'+friendly, raw:txt, status:r.status};
   }catch(e){ return {ok:false,reason:'network:'+e.message}; }
 }
 
@@ -1558,13 +1629,17 @@ async function sendRecipientNotification({recipient,amount,symbol,from,txHash,ne
   if(email){
     if(emailResult&&emailResult.ok){
       st+='✅ Email DELIVERED to '+email+' via EmailJS\n';
+      toast('success','Email Sent','Notification delivered to '+email);
     } else if(emailResult&&emailResult.reason==='not-configured'){
       st+='ℹ️ Email not auto-sent — EmailJS not configured. Click below to send manually via your email app.\n  (Set up EmailJS in More → Email Delivery for automatic delivery.)\n';
+      toast('info','Email Not Configured','Set up EmailJS in More → Email Delivery to auto-send. A manual email button is shown below.');
     } else if(emailResult){
       st+='⚠️ EmailJS send failed: '+emailResult.reason+'\n  You can still send manually via the button below.\n';
+      toast('error','Email Delivery Failed', emailResult.reason);
     }
   } else {
     st+='ℹ️ No recipient email provided — preview only. Add an email above to deliver a real notification.\n';
+    toast('info','No Email Address','Add a recipient email in the notify field to send a real email notification.');
   }
   statusLine.textContent=st;
   content.appendChild(statusLine);
@@ -1619,7 +1694,7 @@ try{
     'estimateGas','getRealTxHistory','saveRealTxHistory','addRealTxRecord',
     'renderRealTxHistory','exportRealTxCSV','makeEthereumProvider',
     'getEmailJSConfig','saveEmailJSConfig','loadEmailJSConfig','clearEmailJSConfig',
-    'saveEmailJSConfigData','sendTestEmail','deliverEmailViaEmailJS','updateEmailJSStatus',
+    'saveEmailJSConfigData','sendTestEmail','deliverEmailViaEmailJS','updateEmailJSStatus','diagnoseEmailJS',
     'renderWallets','renderHero','renderStats','renderTokens','renderSimTxs','renderPending',
     'renderAddrBook','renderAddrQuick','renderNotifLog',
     'buildHtmlEmail','buildTextEmail','fillTemplateVars','sendRecipientNotification',

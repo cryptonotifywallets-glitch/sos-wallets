@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
   <title>SOS WALLETS — Advanced Crypto Wallet</title>
-  <link rel="stylesheet" href="styles.css?v=3">
+  <link rel="stylesheet" href="styles.css?v=4">
   <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -687,6 +687,7 @@
           <div class="email-form-actions">
             <button class="btn btn-cyan" onclick="saveEmailJSConfig()">💾 Save Email Config</button>
             <button class="btn btn-secondary" onclick="sendTestEmail()">📨 Send Test Email</button>
+            <button class="btn btn-cyan" onclick="diagnoseEmailJS()">🔍 Diagnose Connection</button>
             <button class="btn btn-danger btn-sm" onclick="clearEmailJSConfig()">🗑 Clear Config</button>
           </div>
           <div id="emailjs-status" class="emailjs-status"></div>
@@ -834,16 +835,16 @@
     <button class="btn btn-secondary btn-sm" id="install-dismiss">✕</button>
   </div>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
   <script>
     // Register service worker for PWA / offline support
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         // Clean up any old/stale service workers first
         navigator.serviceWorker.getRegistrations().then(regs => {
-          regs.forEach(r => { if (r.active && r.active.scriptURL.indexOf('sw.js?v=3') === -1) r.unregister(); });
+          regs.forEach(r => { if (r.active && r.active.scriptURL.indexOf('sw.js?v=4') === -1) r.unregister(); });
         }).catch(() => {});
-        navigator.serviceWorker.register('sw.js?v=3').catch(() => {});
+        navigator.serviceWorker.register('sw.js?v=4').catch(() => {});
       });
     }
     // PWA install prompt capture
