@@ -47,6 +47,7 @@ db.exec(`
     password_hash TEXT NOT NULL,
     reset_token TEXT,
     reset_expires INTEGER,
+    is_admin INTEGER DEFAULT 0,
     created_at INTEGER DEFAULT (strftime('%s','now'))
   );
 
@@ -84,6 +85,22 @@ db.exec(`
   );
 `);
 
+/* ---------- Admin bootstrap: create default admin on first run ---------- */
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@soswallets.app';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'admin123456';
+(function bootstrapAdmin(){
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL);
+  if(!existing){
+    const hash = bcrypt.hashSync(ADMIN_PASS, 10);
+    db.prepare('INSERT INTO users (name, email, password_hash, is_admin) VALUES (?, ?, ?, 1)').run('Admin', ADMIN_EMAIL, hash);
+    console.log(`  [Admin] Default admin created: ${ADMIN_EMAIL} / ${ADMIN_PASS}`);
+    console.log(`  [Admin] CHANGE THIS IMMEDIATELY via .env (ADMIN_EMAIL, ADMIN_PASS) or the admin panel!`);
+  } else {
+    // Ensure existing admin has is_admin flag
+    db.prepare('UPDATE users SET is_admin = 1 WHERE email = ?').run(ADMIN_EMAIL);
+  }
+})();
+
 /* ---------- Auth middleware ---------- */
 function auth(req, res, next) {
   const header = req.headers.authorization || '';
@@ -99,7 +116,15 @@ function auth(req, res, next) {
 }
 
 function signToken(user) {
-  return jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ id: user.id, email: user.email, name: user.name, is_admin: user.is_admin || 0 }, JWT_SECRET, { expiresIn: '30d' });
+}
+
+/* Admin middleware — requires auth + is_admin flag */
+function adminAuth(req, res, next) {
+  auth(req, res, () => {
+    if (!req.user.is_admin) return res.status(403).json({ error: 'Admin access required' });
+    next();
+  });
 }
 
 /* ---------- Email transporter (lazy init) ---------- */
@@ -174,7 +199,7 @@ app.post('/api/auth/login', (req, res) => {
     if (!bcrypt.compareSync(password, user.password_hash)) return res.status(401).json({ error: 'Invalid email or password' });
 
     const token = signToken(user);
-    res.json({ ok: true, token, user: { id: user.id, name: user.name, email: user.email } });
+    res.json({ ok: true, token, user: { id: user.id, name: user.name, email: user.email, is_admin: user.is_admin || 0 } });
   } catch (e) {
     res.status(500).json({ error: 'Server error: ' + e.message });
   }
@@ -364,6 +389,118 @@ app.get('/api/email/log', auth, (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+/* ============================================================
+   ADMIN ROUTES — requires admin token
+   ============================================================ */
+
+/* Admin dashboard stats */
+app.get('/api/admin/stats', adminAuth, (req, res) => {
+  try {
+    const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
+    const adminCount = db.prepare('SELECT COUNT(*) as c FROM users WHERE is_admin = 1').get().c;
+    const txCount = db.prepare('SELECT COUNT(*) as c FROM tx_log').get().c;
+    const emailCount = db.prepare('SELECT COUNT(*) as c FROM email_log').get().c;
+    const emailSent = db.prepare("SELECT COUNT(*) as c FROM email_log WHERE status = 'success'").get().c;
+    const emailFailed = db.prepare("SELECT COUNT(*) as c FROM email_log WHERE status = 'failed'").get().c;
+    const recentUsers = db.prepare('SELECT id, name, email, is_admin, created_at FROM users ORDER BY created_at DESC LIMIT 5').all();
+    res.json({ ok: true, stats: { userCount, adminCount, txCount, emailCount, emailSent, emailFailed, recentUsers } });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* List all users */
+app.get('/api/admin/users', adminAuth, (req, res) => {
+  try {
+    const users = db.prepare('SELECT id, name, email, is_admin, created_at FROM users ORDER BY created_at DESC').all();
+    res.json({ ok: true, users });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Delete a user (and cascade their data) */
+app.delete('/api/admin/users/:id', adminAuth, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (id === req.user.id) return res.status(400).json({ error: 'Cannot delete your own admin account' });
+    const target = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    db.prepare('DELETE FROM user_data WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM tx_log WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    res.json({ ok: true, message: 'User deleted: ' + target.email });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Promote/demote admin */
+app.post('/api/admin/users/:id/toggle-admin', adminAuth, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const newVal = user.is_admin ? 0 : 1;
+    db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(newVal, id);
+    res.json({ ok: true, is_admin: newVal, message: newVal ? 'Promoted to admin' : 'Demoted from admin' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* View all transactions (all users) */
+app.get('/api/admin/transactions', adminAuth, (req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT t.*, u.email as user_email, u.name as user_name
+      FROM tx_log t LEFT JOIN users u ON t.user_id = u.id
+      ORDER BY t.ts DESC LIMIT 500
+    `).all();
+    res.json({ ok: true, transactions: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* View all email logs (all users) */
+app.get('/api/admin/email-log', adminAuth, (req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT e.*, u.email as user_email
+      FROM email_log e LEFT JOIN users u ON e.user_id = u.id
+      ORDER BY e.ts DESC LIMIT 500
+    `).all();
+    res.json({ ok: true, logs: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Broadcast email to all users */
+app.post('/api/admin/broadcast', adminAuth, async (req, res) => {
+  try {
+    const { subject, html, text } = req.body;
+    if (!subject || !html) return res.status(400).json({ error: 'subject and html required' });
+    const users = db.prepare('SELECT email FROM users').all();
+    let sent = 0, failed = 0;
+    for (const u of users) {
+      const result = await sendMail(u.email, subject, html, text);
+      db.prepare('INSERT INTO email_log (user_id, to_addr, subject, status, detail) VALUES (?,?,?,?,?)')
+        .run(req.user.id, u.email, subject, result.ok ? 'success' : 'failed', result.ok ? 'Broadcast sent' : (result.reason||''));
+      if (result.ok) sent++; else failed++;
+    }
+    res.json({ ok: true, sent, failed, total: users.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Admin: serve the admin dashboard page */
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
 /* ============================================================

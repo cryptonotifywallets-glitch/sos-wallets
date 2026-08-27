@@ -21,3 +21,21 @@
 - [x] Serve locally & smoke-test in browser (all features render, no console errors)
 - [x] Commit & push to GitHub (commit 9255db7 pushed to origin/main)
 - [x] Summarize all changes for user
+
+## Phase 4 — Backend (COMPLETE)
+- [x] Create Node.js/Express + SQLite backend (server.js, package.json, .env)
+- [x] JWT auth + bcrypt password hashing
+- [x] Data sync, transaction log, email log, forgot/reset password endpoints
+- [x] Backend serves static frontend
+- [x] api-client.js frontend module
+- [x] Test all endpoints locally
+
+## Phase 5 — Admin System (IN PROGRESS)
+- [x] Add is_admin column + admin bootstrap to server.js
+- [x] Add adminAuth middleware + is_admin in JWT
+- [x] Add all admin API routes (stats, users, toggle-admin, transactions, email-log, broadcast)
+- [x] Test admin API endpoints (login, stats, users — all working)
+- [x] Create admin.html dashboard page
+- [x] Test admin.html in browser (login, stats, tabs, broadcast all work)
+- [ ] Commit & push admin system to GitHub
+- [ ] Inform user of admin credentials
