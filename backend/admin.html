@@ -546,7 +546,16 @@
             <label>Sender Display Name</label>
             <input id="emailjsFromName" placeholder="SOS WALLETS">
           </div>
-          <p style="font-size:12px;color:var(--muted);">EmailJS sends directly to any recipient. Set up at <a href="https://emailjs.com" target="_blank" style="color:var(--accent);">emailjs.com</a>. Template needs: To={{to_email}}, Subject={{subject}}, Content={{{message}}}</p>
+          <div style="font-size:12px;color:var(--muted);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:8px;">
+            <strong style="color:var(--accent);">⚠️ EmailJS Template Setup (IMPORTANT):</strong><br>
+            Your template at emailjs.com must use these exact variables:<br>
+            • <strong>To Email</strong>: <code>{{to_email}}</code> (required — this is the recipient)<br>
+            • <strong>Subject</strong>: <code>{{subject}}</code><br>
+            • <strong>From Name</strong>: <code>{{from_name}}</code><br>
+            • <strong>Content</strong>: <code>{{{message}}}</code> (TRIPLE braces — renders HTML email body)<br>
+            If your Content field shows <code>[html]</code> or <code>{{message}}</code> (double braces), change it to <code>{{{message}}}</code> (triple braces) or emails will arrive blank!<br>
+            Set up at <a href="https://emailjs.com" target="_blank" style="color:var(--accent);">emailjs.com</a>
+          </div>
         </div>
 
         <div id="noneBox" class="hidden">
@@ -1400,17 +1409,37 @@ async function sendNotificationEmail(toEmail, subject, textBody, htmlBody){
       // Fall through to client-side providers
     }
   }
-  // 2) EmailJS (client-side)
+  // 2) EmailJS (client-side) — sends directly to the recipient's inbox
   if(cfg.provider === 'emailjs' && cfg.serviceId && cfg.templateId && cfg.publicKey){
     try {
+      // Send BOTH plain text and HTML in multiple variable names so any template works.
+      // Template should use: To={{to_email}}, Subject={{subject}}, Content={{{message}}} (triple braces for HTML)
+      const params = {
+        to_email: toEmail,
+        to: toEmail,
+        email: toEmail,
+        recipient: toEmail,
+        reply_to: toEmail,
+        from_name: cfg.fromName || 'SOS WALLETS',
+        subject: subject,
+        // 'message' carries the HTML body — template must use {{{message}}} (triple braces) to render HTML
+        message: htmlBody || textBody,
+        // Also send plain text and alternate HTML variable names for flexibility
+        text: textBody,
+        plain_text: textBody,
+        html: htmlBody,
+        html_message: htmlBody,
+        content: htmlBody || textBody
+      };
       const r = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ service_id:cfg.serviceId, template_id:cfg.templateId, user_id:cfg.publicKey,
-          template_params:{ to_email:toEmail, to:toEmail, email:toEmail, recipient:toEmail, from_name:cfg.fromName||'SOS WALLETS', subject, message:textBody, html:htmlBody, html_message:htmlBody } })
+        body: JSON.stringify({ service_id:cfg.serviceId, template_id:cfg.templateId, user_id:cfg.publicKey, template_params:params })
       });
-      if(r.ok) return { ok:true, provider:'emailjs', detail:'Delivered via EmailJS' };
-      const txt = await r.text();
-      return { ok:false, reason:'EmailJS error: '+txt };
+      const data = await r.json().catch(()=>({}));
+      // EmailJS returns { success: true } on success, or { success: false, ... } on failure
+      if(r.ok && data.success !== false) return { ok:true, provider:'emailjs', detail:'Delivered to '+toEmail+' via EmailJS' };
+      const errMsg = data.error || data.message || ('HTTP '+r.status);
+      return { ok:false, reason:'EmailJS rejected: '+errMsg };
     } catch(e) { return { ok:false, reason:'EmailJS network: '+e.message }; }
   }
   // 3) Web3Forms (client-side, delivers to owner)
@@ -1437,25 +1466,32 @@ async function sendRecipientNotification({recipient, amount, symbol, from, txHas
   const textBody = buildTextEmail(tpl, vars);
   const htmlBody = buildHtmlEmail(tpl, vars);
 
-  // Show preview
+  // Show preview — but mark as "sending" until we confirm the email result
   const preview = document.getElementById('realNotifyPreview');
   const content = document.getElementById('notifyContent');
   const label = document.getElementById('notifyLabel');
   preview.classList.remove('hidden');
-  if(label) label.textContent = notifyOnly ? '🔔 Notification Sent (Notify-Only — no on-chain tx)' : '🔔 Notification Sent to Recipient';
+  if(label) label.textContent = notifyOnly ? '⏳ Sending notification (Notify-Only — no on-chain tx)…' : '⏳ Sending notification to recipient…';
   content.innerHTML = '<iframe srcdoc="'+htmlBody.replace(/"/g,'&quot;')+'" style="width:100%;height:350px;border:1px solid var(--border);border-radius:8px;background:#fff;"></iframe>';
 
   let statusText = 'Subject: '+subject+'\n\n';
+  let emailOk = false;
   // Webhook
   if(webhook){ try { await fetch(webhook,{method:'POST',headers:{'Content-Type':'application/json'},mode:'no-cors',body:JSON.stringify({event:notifyOnly?'alert':'incoming_deposit',recipient,amount,symbol,from,txHash,network,memo})}); statusText+='✅ Webhook dispatched\n'; } catch(e){ statusText+='⚠️ Webhook failed\n'; } }
 
   // Email
   if(email){
     const result = await sendNotificationEmail(email, subject, textBody, htmlBody);
-    if(result.ok){ statusText+='✅ Email sent via '+result.provider+'\n'; toast('success','Email Sent','Delivered to '+email+' via '+result.provider); }
+    if(result.ok){ statusText+='✅ Email sent via '+result.provider+'\n'; emailOk = true; toast('success','Email Sent','Delivered to '+email+' via '+result.provider); }
     else { statusText+='⚠️ Email failed: '+result.reason+'\n'; toast('error','Email Failed', result.reason); }
   } else {
     statusText+='ℹ️ No recipient email — preview only\n';
+  }
+  // Update label based on actual email result
+  if(label){
+    if(emailOk) label.textContent = notifyOnly ? '✅ Notification Sent (Notify-Only — email delivered)' : '✅ Notification Sent — email delivered to recipient';
+    else if(email && !emailOk) label.textContent = '❌ Email delivery failed — see details below';
+    else label.textContent = notifyOnly ? '🔔 Notification Preview (no email — recipient address not set)' : '🔔 Notification Preview';
   }
   const statusDiv = document.createElement('div');
   statusDiv.style.cssText = 'font-size:12px;color:var(--muted);margin-top:10px;white-space:pre-line;line-height:1.6;';

@@ -21,5 +21,5 @@ Make the admin dashboard the ONLY interface. No user signups, no user accounts, 
 
 ## Deploy
 - [x] Test locally (all endpoints verified: login, stats, data CRUD, tx log, email test, root route serves admin.html)
-- [ ] Push to GitHub
-- [ ] Redeploy on Railway (auto from git push)
+- [x] Push to GitHub (commit ca762ac → cryptonotifywallets-glitch/sos-wallets)
+- [x] Redeploy on Railway (auto from git push — live at sos-wallets-production.up.railway.app, v2.0.0 admin-only confirmed)
