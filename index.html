@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5.0">
+  <meta name="theme-color" content="#0a0e17">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>SOS WALLETS — Advanced Crypto Wallet</title>
+  <link rel="stylesheet" href="styles.css?v=3">
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/web3/4.3.0/web3.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body>
+
+  <!-- ============================================= -->
+  <!-- ============ LOGIN SCREEN ================== -->
+  <!-- ============================================= -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <div class="login-logo">
+        <h1>⚡ SOS WALLETS</h1>
+        <p>Sign in to access your wallets</p>
+      </div>
+
+      <div class="login-tabs">
+        <button class="login-tab active" id="lt-login" onclick="switchLoginTab('login')">Sign In</button>
+        <button class="login-tab" id="lt-register" onclick="switchLoginTab('register')">Register</button>
+      </div>
+
+      <div id="login-form">
+        <div class="form-group">
+          <label>Email or Username</label>
+          <input class="input" id="login-email" placeholder="you@example.com">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input class="input" id="login-pass" type="password" placeholder="••••••••">
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doLogin()">🔓 Sign In</button>
+        <p style="text-align:center;margin-top:14px;font-size:0.76rem;color:var(--text-muted);">
+          First time? Switch to Register to create an account.
+        </p>
+      </div>
+
+      <div id="register-form" class="hidden">
+        <div class="form-group">
+          <label>Display Name</label>
+          <input class="input" id="reg-name" placeholder="Your name">
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input class="input" id="reg-email" type="email" placeholder="you@example.com">
+        </div>
+        <div class="form-group">
+          <label>Password (min 6 chars)</label>
+          <input class="input" id="reg-pass" type="password" placeholder="••••••••">
+        </div>
+        <div class="form-group">
+          <label>Confirm Password</label>
+          <input class="input" id="reg-pass2" type="password" placeholder="••••••••">
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doRegister()">✨ Create Account</button>
+      </div>
+
+      <div style="text-align:center;margin-top:18px;">
+        <button class="btn btn-danger btn-sm" onclick="resetLoginData()">🗑 Reset All Login Data</button>
+        <p style="font-size:0.7rem;color:var(--text-muted);margin-top:8px;">
+          Clears all accounts & sessions stored in this browser.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================= -->
+  <!-- ============ MAIN APP ====================== -->
+  <!-- ============================================= -->
+  <div id="main-app" class="app-container hidden">
+
+    <!-- Top bar -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="topbar-logo">⚡ SOS WALLETS</div>
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn" onclick="toggleTheme()" id="theme-btn" title="Toggle theme">🌙</button>
+        <div class="user-chip">
+          <div class="avatar" id="user-avatar">U</div>
+          <span id="user-name">User</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="logout()">🚪 Logout</button>
+      </div>
+    </div>
+
+    <!-- Mode Tabs -->
+    <div class="mode-tabs">
+      <button class="mode-tab active" id="tab-sim" onclick="switchMode('sim')">🎮 Simulator Mode</button>
+      <button class="mode-tab" id="tab-real" onclick="switchMode('real')">🔗 Real Send &amp; Notify</button>
+      <button class="mode-tab" id="tab-more" onclick="switchMode('more')">📊 More</button>
+    </div>
+
+    <!-- ============================================= -->
+    <!-- ============ SIMULATOR MODE ================ -->
+    <!-- ============================================= -->
+    <div id="sim-section">
+
+      <div class="demo-banner">
+        <span class="badge-icon">⚠️</span>
+        <div>
+          <strong>DEMO MODE — NOT REAL CRYPTOCURRENCY.</strong>
+          All wallets, balances, and transactions here are <em>simulated</em> and stored only in your browser.
+          No blockchain, no real money, no real network. Use for learning, teaching, and UI prototyping only.
+        </div>
+      </div>
+
+      <!-- Dashboard Stats -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon">💼</div>
+          <div class="stat-label">Portfolio Value</div>
+          <div class="stat-value" id="stat-portfolio">$0</div>
+          <div class="stat-sub" id="stat-portfolio-sub">across all wallets</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">👛</div>
+          <div class="stat-label">Wallets</div>
+          <div class="stat-value" id="stat-wallets">0</div>
+          <div class="stat-sub">demo wallets</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📤</div>
+          <div class="stat-label">Total Sent</div>
+          <div class="stat-value" id="stat-sent">0</div>
+          <div class="stat-sub" id="stat-sent-sub">demo transactions</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📥</div>
+          <div class="stat-label">Total Received</div>
+          <div class="stat-value" id="stat-received">0</div>
+          <div class="stat-sub" id="stat-received-sub">demo transactions</div>
+        </div>
+      </div>
+
+      <!-- Portfolio breakdown -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span class="icon">🥧</span> Portfolio Breakdown</div>
+        </div>
+        <div class="portfolio-bar" id="portfolio-bar"></div>
+        <div class="portfolio-legend" id="portfolio-legend"></div>
+      </div>
+
+      <div class="grid-2">
+
+        <!-- Wallets panel -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><span class="icon">👛</span> Demo Wallets</div>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-secondary btn-sm" onclick="openImportWalletModal()">📥 Import</button>
+              <button class="btn btn-primary btn-sm" onclick="openCreateWalletModal()">+ New</button>
+            </div>
+          </div>
+          <div class="wallet-list" id="wallet-list"></div>
+          <div id="sim-empty" class="empty-state hidden">
+            <div class="icon">👛</div>
+            No wallets yet. Create your first demo wallet to get started.
+          </div>
+        </div>
+
+        <!-- Send + balance panel -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><span class="icon">💸</span> Send (Demo)</div>
+          </div>
+          <div class="balance-hero" id="balance-hero">
+            <div class="label">Selected Wallet Balance</div>
+            <div class="amount" id="hero-balance">0.00</div>
+            <div class="sub" id="hero-sub">Select a wallet</div>
+          </div>
+
+          <div class="form-group">
+            <label>Token</label>
+            <div class="token-pills" id="sim-tokens"></div>
+          </div>
+
+          <div class="form-group">
+            <label>Recipient Address (demo)</label>
+            <input class="input" id="sim-recipient" placeholder="0x... or pick from address book">
+            <div id="addr-book-quick" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;"></div>
+          </div>
+
+          <div class="form-group">
+            <label>Amount</label>
+            <input class="input" id="sim-amount" type="number" min="0" step="0.0001" placeholder="0.0000">
+          </div>
+
+          <div class="form-group">
+            <label>Memo / Note (optional)</label>
+            <input class="input" id="sim-memo" placeholder="e.g. Payment for services">
+          </div>
+
+          <div class="gas-info">
+            <div class="gas-pill">
+              <div class="gp-label">Est. Gas (demo)</div>
+              <div class="gp-value" id="sim-gas">0.00021 ETH</div>
+            </div>
+            <div class="gas-pill">
+              <div class="gp-label">Network Fee</div>
+              <div class="gp-value" id="sim-fee">$0.00</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Send notification to recipient? (demo preview)</label>
+            <select class="select" id="sim-notify-toggle">
+              <option value="yes">Yes — show incoming deposit notification</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+
+          <button class="btn btn-primary btn-full" onclick="simSend()">📤 Send Demo Transfer</button>
+
+          <div class="notify-preview hidden" id="sim-notify-preview">
+            <div class="np-label">🔔 Recipient Notification Preview</div>
+            <div class="np-content" id="sim-notify-content"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pending deposits (accept flow) -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span class="icon">⏳</span> Pending Incoming Deposits</div>
+        </div>
+        <div id="pending-deposits"></div>
+        <div id="pending-empty" class="empty-state">
+          <div class="icon">⏳</div>
+          No pending deposits. Send to one of your wallets to see the accept/decline flow.
+        </div>
+      </div>
+
+      <!-- Transaction history -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span class="icon">📜</span> Transaction History (Demo)</div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-secondary btn-sm" onclick="exportTxs('csv')">📥 CSV</button>
+            <button class="btn btn-secondary btn-sm" onclick="exportTxs('json')">📥 JSON</button>
+            <button class="btn btn-danger btn-sm" onclick="resetSim()">🗑 Reset</button>
+          </div>
+        </div>
+        <div class="search-bar">
+          <input class="input" id="tx-search" placeholder="🔍 Search by address, token, memo..." oninput="renderSimTxs()">
+          <select class="select" id="tx-filter" style="max-width:160px;" onchange="renderSimTxs()">
+            <option value="all">All</option>
+            <option value="sent">Sent</option>
+            <option value="received">Received</option>
+          </select>
+        </div>
+        <div class="tx-list" id="sim-tx-list"></div>
+        <div id="sim-tx-empty" class="empty-state">
+          <div class="icon">📜</div>
+          No transactions yet. Send some demo crypto to see history here.
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ============================================= -->
+    <!-- ============ REAL SEND & NOTIFY ============ -->
+    <!-- ============================================= -->
+    <div id="real-section" class="hidden">
+
+      <div class="real-banner">
+        <span class="badge-icon">✅</span>
+        <div>
+          <strong>REAL MODE.</strong> Connects to your actual Web3 wallet (MetaMask, Trust Wallet, Coinbase, etc.) and sends
+          <em>real</em> cryptocurrency. A real notification is generated for the recipient.
+          Understand gas fees and network selection before sending. Transactions are irreversible.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span class="icon">🔗</span> Wallet Connection</div>
+          <div id="conn-status" class="status-pill disconnected"><span class="dot"></span> Not Connected</div>
+        </div>
+        <div id="conn-details" class="hidden">
+          <div class="grid-3">
+            <div>
+              <div style="font-size:0.7rem;color:var(--text-secondary);text-transform:uppercase;margin-bottom:4px;">Connected Address</div>
+              <div style="font-family:monospace;font-size:0.8rem;word-break:break-all;" id="conn-address">—</div>
+            </div>
+            <div>
+              <div style="font-size:0.7rem;color:var(--text-secondary);text-transform:uppercase;margin-bottom:4px;">Network</div>
+              <div style="font-weight:600;font-size:0.9rem;" id="conn-network">—</div>
+            </div>
+            <div>
+              <div style="font-size:0.7rem;color:var(--text-secondary);text-transform:uppercase;margin-bottom:4px;">Balance</div>
+              <div style="font-weight:700;font-size:1rem;color:var(--accent-green);" id="conn-balance">—</div>
+            </div>
+          </div>
+          <div style="margin-top:14px;">
+            <button class="btn btn-secondary btn-sm" onclick="refreshBalance()">🔄 Refresh Balance</button>
+            <button class="btn btn-secondary btn-sm" onclick="showQR(realState.address)">📱 Show QR</button>
+          </div>
+        </div>
+        <div id="conn-cta" style="text-align:center;padding:20px 0;">
+          <p style="color:var(--text-secondary);margin-bottom:16px;font-size:0.9rem;">
+            Connect your Web3 wallet to send real transactions with recipient notifications.
+          </p>
+          <button class="btn btn-primary" onclick="connectWallet()">🔗 Connect Wallet</button>
+          <p style="color:var(--text-muted);margin-top:12px;font-size:0.75rem;line-height:1.5;">
+            Supports <strong>MetaMask</strong>, <strong>Trust Wallet</strong>, <strong>Coinbase Wallet</strong>, and other EIP-1193 wallets.
+            <br>On mobile? The app will deep-link you straight into your wallet's browser.
+          </p>
+          <div style="margin-top:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+            <span class="wallet-pill">🦊 MetaMask</span>
+            <span class="wallet-pill">🛡️ Trust</span>
+            <span class="wallet-pill">🔵 Coinbase</span>
+            <span class="wallet-pill">🌈 Rainbow</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="card-title"><span class="icon">🌐</span> Select Network</div></div>
+        <div class="network-grid" id="network-grid"></div>
+        <p style="font-size:0.78rem;color:var(--text-muted);margin-top:8px;">
+          We'll attempt to switch your wallet to the selected network automatically.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="card-title"><span class="icon">📤</span> Send Real Transaction</div></div>
+        <div class="form-group">
+          <label>Recipient Wallet Address</label>
+          <div class="scan-row">
+            <input class="input" id="real-recipient" placeholder="0x recipient address">
+            <button class="btn btn-secondary btn-sm" onclick="scanAddressQR()" title="Scan QR code with camera">📷 Scan</button>
+          </div>
+          <div id="real-addr-quick" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;"></div>
+        </div>
+        <div class="form-group">
+          <label>Amount (native token)</label>
+          <input class="input" id="real-amount" type="number" min="0" step="0.0001" placeholder="0.0000" oninput="estimateGas()">
+          <div id="gas-estimate" class="gas-estimate hidden"></div>
+        </div>
+        <div class="form-group">
+          <label>Memo (optional, included in notification)</label>
+          <input class="input" id="real-memo" placeholder="e.g. Invoice #1234">
+        </div>
+        <div class="form-group">
+          <label>Notify recipient of incoming deposit via</label>
+          <div class="grid-2" style="gap:12px;">
+            <div><input class="input" id="notify-email" type="email" placeholder="Recipient email (for email notification)"></div>
+            <div><input class="input" id="notify-webhook" placeholder="Webhook URL (optional)"></div>
+          </div>
+          <p style="font-size:0.74rem;color:var(--text-muted);margin-top:6px;">
+            Enter the recipient's email to send them a notification. For <strong>automatic email delivery</strong>, set up EmailJS once in <strong>More → 📧 Email Delivery</strong>. Otherwise a "send manually" button appears after each transaction.
+          </p>
+        </div>
+        <button class="btn btn-green btn-full" id="real-send-btn" onclick="realSend()" disabled>🚀 Send &amp; Notify Recipient</button>
+        <div style="margin:10px 0;text-align:center;font-size:0.75rem;color:var(--text-muted);">— or —</div>
+        <button class="btn btn-cyan btn-full" id="notify-only-btn" onclick="notifyOnly()">🔔 Notify Recipient Only (No Funds Needed)</button>
+        <p style="font-size:0.72rem;color:var(--text-muted);margin-top:6px;line-height:1.5;">
+          <strong>Fallback mode:</strong> Sends the "incoming deposit" notification to the recipient <em>without</em> broadcasting a blockchain transaction.
+          Use this if your wallet has no funds, the transaction failed, or you just want to alert someone that a deposit is coming. The recipient gets notified; no real money moves.
+        </p>
+        <div class="notify-preview hidden" id="fallback-offer" style="margin-top:12px;border-color:rgba(245,158,11,0.5);background:rgba(245,158,11,0.08);">
+          <div class="np-label" style="color:var(--accent-yellow);">⚠️ Transaction Failed — Use Fallback</div>
+          <div class="np-content" style="font-size:0.8rem;">Your transaction could not be broadcast (e.g. insufficient funds). You can still notify the recipient that a deposit is incoming by tapping the <strong>Notify Recipient Only</strong> button above. No funds are needed for that.</div>
+        </div>
+        <div class="notify-preview hidden" id="real-notify-preview">
+          <div class="np-label">🔔 Notification Sent to Recipient</div>
+          <div class="np-content" id="real-notify-content"></div>
+        </div>
+        <div class="notify-preview hidden" id="real-tx-result" style="margin-top:12px;border-color:rgba(16,185,129,0.4);">
+          <div class="np-label" style="color:var(--accent-green);">✅ Transaction Broadcast</div>
+          <div class="np-content" id="real-tx-content"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span class="icon">📋</span> Real Transaction History</div>
+          <button class="btn btn-secondary btn-sm" onclick="exportRealTxCSV()" id="export-csv-btn">⬇ Export CSV</button>
+        </div>
+        <div id="real-tx-history">
+          <p class="empty-state">No real transactions yet. Your sent transactions will appear here.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================= -->
+    <!-- ============ MORE (Address Book, Notifs, Settings) === -->
+    <!-- ============================================= -->
+    <div id="more-section" class="hidden">
+      <div class="sub-tabs">
+        <button class="sub-tab active" id="st-addr" onclick="switchSub('addr')">📒 Address Book</button>
+        <button class="sub-tab" id="st-notif" onclick="switchSub('notif')">🔔 Notifications</button>
+        <button class="sub-tab" id="st-template" onclick="switchSub('template')">🎨 Notification Template</button>
+        <button class="sub-tab" id="st-settings" onclick="switchSub('settings')">⚙️ Settings</button>
+        <button class="sub-tab" id="st-email" onclick="switchSub('email')">📧 Email Delivery</button>
+      </div>
+
+      <!-- Address Book -->
+      <div id="sub-addr" class="card">
+        <div class="card-header">
+          <div class="card-title"><span class="icon">📒</span> Saved Recipients</div>
+          <button class="btn btn-primary btn-sm" onclick="openAddAddrModal()">+ Add Address</button>
+        </div>
+        <div id="addr-book-list"></div>
+        <div id="addr-book-empty" class="empty-state">
+          <div class="icon">📒</div>
+          No saved addresses. Add recipients here for quick sending.
+        </div>
+      </div>
+
+      <!-- Notifications Log -->
+      <div id="sub-notif" class="card hidden">
+        <div class="card-header">
+          <div class="card-title"><span class="icon">🔔</span> Notification History</div>
+          <button class="btn btn-danger btn-sm" onclick="clearNotifLog()">🗑 Clear</button>
+        </div>
+        <div id="notif-log-list"></div>
+        <div id="notif-log-empty" class="empty-state">
+          <div class="icon">🔔</div>
+          No notifications sent yet.
+        </div>
+      </div>
+
+      <!-- Notification Template Composer -->
+      <div id="sub-template" class="card hidden">
+        <div class="card-header">
+          <div class="card-title"><span class="icon">🎨</span> Notification Template Designer</div>
+        </div>
+        <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:16px;">
+          Fully customize how your recipient sees the notification. Edit the sender name, logo, message, and action button.
+          Pick a preset to start, then tweak anything. Your settings are saved automatically.
+        </p>
+
+        <!-- Preset Templates -->
+        <div class="form-group">
+          <label>Quick Start — Preset Templates</label>
+          <div id="preset-list" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+        </div>
+
+        <!-- Sender Name -->
+        <div class="form-group">
+          <label>Sender / Brand Name <span style="color:var(--text-muted);font-size:0.72rem;">(type any name — shows as who the notification is from)</span></label>
+          <input class="input" id="tmpl-sender" placeholder="e.g. GlobalPay, John Doe, CryptoNotify...">
+        </div>
+
+        <!-- Logo -->
+        <div class="form-group">
+          <label>Logo Image URL <span style="color:var(--text-muted);font-size:0.72rem;">(paste any logo URL, or pick a preset below)</span></label>
+          <input class="input" id="tmpl-logo" placeholder="https://example.com/logo.png">
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <span style="font-size:0.72rem;color:var(--text-muted);">Presets:</span>
+            <button class="btn btn-sm" style="background:var(--card2);" onclick="setLogoPreset('')">No Logo</button>
+            <button class="btn btn-sm" style="background:var(--card2);" onclick="setLogoPreset('bank')">🏦 Bank</button>
+            <button class="btn btn-sm" style="background:var(--card2);" onclick="setLogoPreset('crypto')">₿ Crypto</button>
+            <button class="btn btn-sm" style="background:var(--card2);" onclick="setLogoPreset('wallet')">👛 Wallet</button>
+            <button class="btn btn-sm" style="background:var(--card2);" onclick="setLogoPreset('shield')">🛡️ Secure</button>
+            <button class="btn btn-sm" style="background:var(--card2);" onclick="setLogoPreset('bolt')">⚡ Bolt</button>
+          </div>
+          <div id="logo-preview" style="margin-top:10px;"></div>
+        </div>
+
+        <!-- Theme Color -->
+        <div class="form-group">
+          <label>Brand Color</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <input class="input" id="tmpl-color" type="color" value="#0066ff" style="width:60px;height:40px;padding:2px;cursor:pointer;">
+            <span style="font-size:0.72rem;color:var(--text-muted);">Pick any color for the email header & buttons</span>
+          </div>
+        </div>
+
+        <!-- Subject Line -->
+        <div class="form-group">
+          <label>Email Subject Line</label>
+          <input class="input" id="tmpl-subject" placeholder="🔔 Incoming Deposit: {amount} {symbol} is on the way">
+          <p style="font-size:0.7rem;color:var(--text-muted);margin-top:4px;">
+            Variables you can use: <code>{amount}</code> <code>{symbol}</code> <code>{from}</code> <code>{network}</code> <code>{sender}</code>
+          </p>
+        </div>
+
+        <!-- Greeting -->
+        <div class="form-group">
+          <label>Greeting Line</label>
+          <input class="input" id="tmpl-greeting" placeholder="Hello,">
+        </div>
+
+        <!-- Intro Message -->
+        <div class="form-group">
+          <label>Opening Message</label>
+          <textarea class="input" id="tmpl-intro" rows="2" placeholder="A deposit is incoming to your wallet."></textarea>
+        </div>
+
+        <!-- Action Button / Link -->
+        <div class="form-group">
+          <label>Action Button — Label</label>
+          <input class="input" id="tmpl-btn-label" placeholder="e.g. Track Transaction, View Details, Confirm Receipt">
+        </div>
+        <div class="form-group">
+          <label>Action Button — Link URL <span style="color:var(--text-muted);font-size:0.72rem;">(where the button sends the recipient)</span></label>
+          <input class="input" id="tmpl-btn-url" placeholder="https://etherscan.io/tx/{txHash}">
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <span style="font-size:0.72rem;color:var(--text-muted);">Link presets:</span>
+            <button class="btn btn-sm" style="background:var(--card2);" onclick="setLinkPreset('etherscan')">Etherscan (ETH)</button>
+            <button class="btn btn-sm" style="background:var(--card2);" onclick="setLinkPreset('bscscan')">BscScan (BSC)</button>
+            <button class="btn btn-sm" style="background:var(--card2);" onclick="setLinkPreset('polygonscan')">PolygonScan</button>
+            <button class="btn btn-sm" style="background:var(--card2);" onclick="setLinkPreset('custom')">Custom Page</button>
+            <button class="btn btn-sm" style="background:var(--card2);" onclick="setLinkPreset('none')">No Button</button>
+          </div>
+          <p style="font-size:0.7rem;color:var(--text-muted);margin-top:6px;line-height:1.5;">
+            <strong>How the link works:</strong> When the recipient clicks the action button in the email, their browser opens this URL.
+            Use <code>{txHash}</code> to auto-fill the transaction hash, or paste any full URL to send them to your own landing page,
+            a payment confirmation page, a support contact, etc.
+          </p>
+        </div>
+
+        <!-- Footer Note -->
+        <div class="form-group">
+          <label>Footer Note <span style="color:var(--text-muted);font-size:0.72rem;">(small text at the bottom)</span></label>
+          <input class="input" id="tmpl-footer" placeholder="This is an automated notification. Do not reply.">
+        </div>
+
+        <!-- Save + Preview -->
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+          <button class="btn btn-green" onclick="saveTemplate()">💾 Save Template</button>
+          <button class="btn btn-cyan" onclick="previewTemplate()">👁️ Live Preview</button>
+          <button class="btn btn-sm" style="background:var(--card2);" onclick="resetTemplate()">↩️ Reset to Default</button>
+          <a class="btn btn-sm" style="background:var(--card2);text-decoration:none;" href="notification-preview.html" target="_blank">🧪 Open Full Preview Demo</a>
+        </div>
+        <p style="font-size:0.72rem;color:var(--text-muted);margin-top:10px;line-height:1.5;">
+          💡 <strong>Full Preview Demo</strong> opens a standalone live composer page where you can experiment with the notification design (email + webhook) and switch between Real Send & Notify-Only scenarios without affecting the app.
+        </p>
+      </div>
+
+      <!-- Settings -->
+      <div id="sub-settings" class="card hidden">
+        <div class="card-header"><div class="card-title"><span class="icon">⚙️</span> Settings</div></div>
+
+        <div class="settings-row">
+          <div>
+            <div class="sr-label">Dark / Light Theme</div>
+            <div class="sr-desc">Toggle the app appearance</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="theme-toggle" onchange="toggleTheme()">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div>
+            <div class="sr-label">Auto-login on this browser</div>
+            <div class="sr-desc">Stay signed in between visits</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="autologin-toggle" onchange="toggleAutologin()" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div>
+            <div class="sr-label">Simulator token prices (USD)</div>
+            <div class="sr-desc">Used for portfolio value calculation</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="openPriceModal()">✏️ Edit</button>
+        </div>
+
+        <div class="section-divider"></div>
+
+        <div class="settings-row">
+          <div>
+            <div class="sr-label">Reset Simulator Data</div>
+            <div class="sr-desc">Clear all demo wallets, transactions & deposits</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="resetSim()">🗑 Reset</button>
+        </div>
+
+        <div class="settings-row">
+          <div>
+            <div class="sr-label">Reset Login / Account Data</div>
+            <div class="sr-desc">Clear all accounts, sessions & login details — logs you out</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="resetLoginData()">🗑 Reset Login</button>
+        </div>
+
+        <div class="settings-row">
+          <div>
+            <div class="sr-label">Reset Everything</div>
+            <div class="sr-desc">Full factory reset — login, sim, address book, notifications, settings</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="resetAll()">⚠️ Reset All</button>
+        </div>
+      </div>
+
+      <!-- Email Delivery (EmailJS) -->
+      <div id="sub-email" class="card hidden">
+        <div class="card-header"><div class="card-title"><span class="icon">📧</span> Email Delivery Setup</div></div>
+
+        <div class="email-setup-intro">
+          <p><strong>Want recipients to actually receive email notifications?</strong> SOS WALLETS is a client-side app, so it needs a free <strong>EmailJS</strong> account to send real emails. Set it up once and every notification is delivered automatically — no mailto clicks needed.</p>
+          <details class="email-guide" open>
+            <summary>📖 Step-by-step EmailJS setup guide (takes ~5 minutes, free)</summary>
+
+            <p style="margin-top:14px;color:var(--text);font-weight:600;">🔒 First — keep your personal email private</p>
+            <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.6;">
+              The address that appears as the <strong>"From" sender</strong> in recipients' inboxes is whatever email account you connect to EmailJS as a Service. <strong>If you connect your personal Gmail, recipients will see your personal Gmail address.</strong>
+            </p>
+            <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.6;">
+              To keep your personal email private, <strong>create a dedicated/branded sender email</strong> and connect THAT to EmailJS instead. For example:
+            </p>
+            <ul style="color:var(--text-muted);font-size:0.85rem;line-height:1.7;">
+              <li>Create a new free Gmail account like <code>soswallets.notify@gmail.com</code> or <code>yourbrand.alerts@gmail.com</code> and connect that one.</li>
+              <li>Or — best for branding — use a <strong>custom domain</strong> (e.g. <code>notify@yourbrand.com</code>) connected via Gmail (Settings → Accounts → "Send mail as") or via EmailJS's custom SMTP option.</li>
+            </ul>
+            <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.6;">
+              Then set a <strong>Sender Display Name</strong> below (e.g. "SOS WALLETS" or "GlobalPay Notifications") so recipients see a clean branded name in their inbox, not a random address.
+            </p>
+
+            <p style="margin-top:16px;color:var(--text);font-weight:600;">🌐 Best option — use your own custom domain (e.g. notify@yourbrand.com)</p>
+            <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.6;">
+              If you buy your own domain (~$9–11/yr for a .com at <a href="https://porkbun.com" target="_blank">Porkbun</a>, <a href="https://www.namecheap.com" target="_blank">Namecheap</a>, or <a href="https://www.cloudflare.com/products/registrar/" target="_blank">Cloudflare</a>), you can send from a fully branded address like <code>notify@yourbrand.com</code>. Recipients see your brand, never a Gmail address, and never your personal email. Two ways to do it:
+            </p>
+            <ul style="color:var(--text-muted);font-size:0.85rem;line-height:1.7;">
+              <li><strong>Free route (recommended):</strong> Set up free email forwarding with <a href="https://improvmx.com" target="_blank">ImprovMX</a> (free tier) — it forwards <code>notify@yourbrand.com</code> to a Gmail account you control. Then in Gmail, enable "Send mail as" <code>notify@yourbrand.com</code> (Settings → Accounts → "Add another email address", using ImprovMX's SMTP). Finally connect THAT Gmail to EmailJS. Recipients see <code>notify@yourbrand.com</code>.</li>
+              <li><strong>Direct SMTP route:</strong> In EmailJS, add a service and choose <strong>Custom SMTP</strong> instead of Gmail. Enter your domain's SMTP server + port + username + password (e.g. from ImprovMX SMTP, or any paid mail host like Zoho/Google Workspace). EmailJS sends directly through your domain.</li>
+            </ul>
+            <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.6;">
+              Either way, you still use the same Service ID / Template ID / Public Key / Sender Display Name fields below — nothing in this app changes. A custom domain just makes the "From" address look fully professional and 100% hides your personal email.
+            </p>
+
+            <p style="margin-top:18px;color:var(--text);font-weight:600;">📋 Full setup walkthrough</p>
+            <ol>
+              <li><strong>Create your dedicated sender email</strong> first (see above) — e.g. sign up for a fresh Gmail at <a href="https://mail.google.com" target="_blank">mail.google.com</a> and name it something like <code>yourbrand.notify</code>. This is the address recipients will see. Don't use your personal email.</li>
+              <li>Go to <a href="https://dashboard.emailjs.com/sign-up" target="_blank">dashboard.emailjs.com/sign-up</a> and create a <strong>free account</strong> (200 emails/month free, no card needed).</li>
+              <li>In the EmailJS dashboard, click <strong>Email Services → Add New Service</strong>. Choose <strong>Gmail</strong> (or Outlook/Yahoo/Custom SMTP). When prompted, sign in with your <strong>dedicated sender email</strong> (the one from step 1, <em>not</em> your personal email). Click "Create Service" and copy the <strong>Service ID</strong> shown (looks like <code>service_xxxxxxx</code>).</li>
+              <li>Click <strong>Email Templates → Create New Template</strong>. Set these fields exactly:
+                <ul>
+                  <li><strong>To Email:</strong> <code>{to_email}</code></li>
+                  <li><strong>From Name:</strong> <code>{from_name}</code> <span style="color:var(--text-muted)">(so the display name you set below shows up, instead of a raw email address)</span></li>
+                  <li><strong>Subject:</strong> <code>{subject}</code></li>
+                  <li><strong>Content:</strong> Click the <strong>"HTML" toggle</strong> at the top of the content editor, then paste <code>{html}</code> into the body. (If you prefer plain text, use <code>{message}</code> instead.)</li>
+                </ul>
+                Scroll down and click <strong>Save</strong>. Copy the <strong>Template ID</strong> (looks like <code>template_xxxxxxx</code>).</li>
+              <li>On the left sidebar click <strong>Account</strong>, then scroll to <strong>API Keys</strong>. Copy your <strong>Public Key</strong> (looks like <code>user_xxxxxxxxxxxxx</code> or a long alphanumeric string).</li>
+              <li>Back here in SOS WALLETS: paste all three IDs below, type a <strong>Sender Display Name</strong> (e.g. <code>SOS WALLETS</code>), and click <strong>Save</strong>.</li>
+              <li>Enter your own email in the "Test email recipient" field and click <strong>Send Test Email</strong>. Check your inbox (and spam folder). You should see it arrive <em>from your dedicated sender email</em> with the display name you chose.</li>
+            </ol>
+            <p style="color:var(--text-muted);font-size:0.8rem;">🔒 Your keys + display name are stored only in your browser (localStorage). EmailJS public keys are safe to use client-side — that's how they're designed to work. Never paste your private/secret key here — EmailJS only needs the public one.</p>
+          </details>
+        </div>
+
+        <div class="email-form">
+          <div class="form-group">
+            <label class="form-label">EmailJS Service ID</label>
+            <input type="text" id="emailjs-service" class="form-input" placeholder="service_xxxxxxx">
+          </div>
+          <div class="form-group">
+            <label class="form-label">EmailJS Template ID</label>
+            <input type="text" id="emailjs-template" class="form-input" placeholder="template_xxxxxxx">
+          </div>
+          <div class="form-group">
+            <label class="form-label">EmailJS Public Key</label>
+            <input type="text" id="emailjs-publickey" class="form-input" placeholder="user_xxxxxxxxxxxxx">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Sender Display Name <span style="color:var(--text-muted);font-weight:400;font-size:0.8rem;">(what recipients see as the "from" name — e.g. SOS WALLETS)</span></label>
+            <input type="text" id="emailjs-fromname" class="form-input" placeholder="SOS WALLETS" maxlength="60">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Test email recipient (your own email)</label>
+            <input type="email" id="emailjs-test-to" class="form-input" placeholder="you@example.com">
+          </div>
+          <div class="email-form-actions">
+            <button class="btn btn-cyan" onclick="saveEmailJSConfig()">💾 Save Email Config</button>
+            <button class="btn btn-secondary" onclick="sendTestEmail()">📨 Send Test Email</button>
+            <button class="btn btn-danger btn-sm" onclick="clearEmailJSConfig()">🗑 Clear Config</button>
+          </div>
+          <div id="emailjs-status" class="emailjs-status"></div>
+        </div>
+
+        <div class="section-divider"></div>
+        <div class="settings-row">
+          <div>
+            <div class="sr-label">Current status</div>
+            <div class="sr-desc" id="emailjs-config-status">Not configured — notifications will show a preview + mailto link only.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <div class="disclaimer">
+        <strong>Disclaimer:</strong> The Simulator uses fake, browser-stored data only — no real blockchain or money.
+        The Real Send section interacts with live blockchain networks and moves <em>real</em> funds.
+        Always double-check recipient addresses and network before sending. Transactions are irreversible.
+        NinjaTech is not responsible for lost funds.
+      </div>
+      Built with ⚡ by SOS WALLETS v2 — Login + Simulator + Real Send &amp; Notify
+    </footer>
+  </div>
+
+  <!-- Toasts -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Create Wallet Modal -->
+  <div class="modal-overlay hidden" id="create-wallet-modal">
+    <div class="modal">
+      <h3>👛 Create Demo Wallet</h3>
+      <div class="form-group"><label>Wallet Name</label><input class="input" id="new-wallet-name" placeholder="e.g. My Savings Wallet"></div>
+      <div class="form-group"><label>Starting Balance — ETH (fake)</label><input class="input" id="new-wallet-balance" type="number" min="0" step="0.01" value="1000"></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeCreateWalletModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="createWallet()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import Wallet Modal -->
+  <div class="modal-overlay hidden" id="import-wallet-modal">
+    <div class="modal">
+      <h3>📥 Import / Watch Wallet</h3>
+      <div class="form-group"><label>Wallet Name</label><input class="input" id="imp-wallet-name" placeholder="e.g. Friend's Wallet"></div>
+      <div class="form-group"><label>Wallet Address</label><input class="input" id="imp-wallet-addr" placeholder="0x... (demo address)"></div>
+      <p style="font-size:0.76rem;color:var(--text-muted);margin-bottom:14px;">
+        Imported wallets start with 0 balance (demo). You can receive demo funds into them.
+      </p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeImportWalletModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="importWallet()">Import</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Address Modal -->
+  <div class="modal-overlay hidden" id="add-addr-modal">
+    <div class="modal">
+      <h3>📒 Add Saved Address</h3>
+      <div class="form-group"><label>Nickname</label><input class="input" id="addr-nick" placeholder="e.g. Alice"></div>
+      <div class="form-group"><label>Wallet Address</label><input class="input" id="addr-val" placeholder="0x..."></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeAddAddrModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="addAddress()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QR Modal -->
+  <!-- Wallet Chooser Modal -->
+  <div class="modal-overlay hidden" id="wallet-modal">
+    <div class="modal wallet-modal">
+      <h3>🔗 Connect a Wallet</h3>
+      <div id="wallet-list-modal"></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeWalletModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QR Scanner Modal -->
+  <div class="modal-overlay hidden" id="qr-scan-modal">
+    <div class="modal qr-scan-modal">
+      <h3>📷 Scan Wallet QR</h3>
+      <video id="qr-scan-video" autoplay playsinline muted></video>
+      <div id="qr-scan-status" style="text-align:center;font-size:0.82rem;color:var(--text-secondary);margin:10px 0;"></div>
+      <div id="qr-scan-result" class="hidden" style="text-align:center;font-weight:600;margin:8px 0;">
+        <span id="qr-scan-val"></span>
+      </div>
+      <div id="qr-scan-upload-wrap" class="hidden" style="margin-top:10px;">
+        <label class="btn btn-secondary btn-full" style="cursor:pointer;">
+          📁 Upload QR Image
+          <input type="file" accept="image/*" style="display:none;" onchange="handleQRFile(this.files[0])">
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeQRScanModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QR Modal -->
+  <div class="modal-overlay hidden" id="qr-modal">
+    <div class="modal">
+      <h3>📱 Wallet QR Code</h3>
+      <div class="qr-display" id="qr-display"></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeQRModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Price Edit Modal -->
+  <div class="modal-overlay hidden" id="price-modal">
+    <div class="modal">
+      <h3>✏️ Token Prices (USD)</h3>
+      <div id="price-inputs"></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closePriceModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="savePrices()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Template Preview Modal -->
+  <div class="modal-overlay hidden" id="tmpl-preview-modal">
+    <div class="modal" style="max-width:600px;">
+      <h3>👁️ Notification Preview</h3>
+      <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:12px;">This is exactly what your recipient will see in their email inbox.</p>
+      <div id="tmpl-preview-content" style="max-height:60vh;overflow-y:auto;border-radius:8px;border:1px solid var(--border);"></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeTmplPreview()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Install App prompt (PWA) -->
+  <div id="install-prompt" class="install-prompt hidden">
+    <span>📲 Install SOS WALLETS on your phone for quick access.</span>
+    <button class="btn btn-primary btn-sm" id="install-btn">Install</button>
+    <button class="btn btn-secondary btn-sm" id="install-dismiss">✕</button>
+  </div>
+
+  <script src="app.js?v=3"></script>
+  <script>
+    // Register service worker for PWA / offline support
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        // Clean up any old/stale service workers first
+        navigator.serviceWorker.getRegistrations().then(regs => {
+          regs.forEach(r => { if (r.active && r.active.scriptURL.indexOf('sw.js?v=3') === -1) r.unregister(); });
+        }).catch(() => {});
+        navigator.serviceWorker.register('sw.js?v=3').catch(() => {});
+      });
+    }
+    // PWA install prompt capture
+    let deferredInstall = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault(); deferredInstall = e;
+      const p = document.getElementById('install-prompt');
+      if (p && !localStorage.getItem('nw_install_dismissed')) p.classList.remove('hidden');
+    });
+    document.addEventListener('DOMContentLoaded', () => {
+      const btn = document.getElementById('install-btn');
+      const dis = document.getElementById('install-dismiss');
+      if (btn) btn.addEventListener('click', async () => {
+        if (deferredInstall) { deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; }
+        document.getElementById('install-prompt').classList.add('hidden');
+      });
+      if (dis) dis.addEventListener('click', () => {
+        document.getElementById('install-prompt').classList.add('hidden');
+        localStorage.setItem('nw_install_dismissed', '1');
+      });
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "name": "SOS WALLETS — Advanced Crypto Wallet",
+  "short_name": "SOS Wallets",
+  "description": "Crypto wallet with Simulator, Real Send & Notify, Address Book, and customizable notification templates. Supports MetaMask, Trust Wallet, and Coinbase Wallet.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0e17",
+  "theme_color": "#0a0e17",
+  "lang": "en",
+  "categories": ["finance", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='40' fill='%230a0e17'/%3E%3Ctext x='96' y='128' font-size='110' text-anchor='middle' fill='%233b82f6'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%230a0e17'/%3E%3Ctext x='256' y='340' font-size='280' text-anchor='middle' fill='%233b82f6'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

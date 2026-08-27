@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOS WALLETS — Notification Preview & Live Composer</title>
+<style>
+  :root{
+    --bg:#0b0f1a; --card:#151b2e; --card2:#1c2440; --border:rgba(255,255,255,0.08);
+    --text:#e8ecf4; --muted:#8892b0; --accent:#00d4ff; --green:#10b981; --yellow:#f59e0b; --red:#ef4444; --purple:#8b5cf6;
+    --font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);line-height:1.6;padding:20px;max-width:1180px;margin:0 auto}
+  h1{font-size:1.6rem;margin-bottom:6px}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--muted);font-size:0.85rem;margin-bottom:20px}
+
+  .layout{display:grid;grid-template-columns:360px 1fr;gap:20px;align-items:start}
+  @media(max-width:920px){.layout{grid-template-columns:1fr}}
+
+  .composer{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;position:sticky;top:20px}
+  .composer h2{font-size:0.95rem;margin-bottom:4px;color:var(--text)}
+  .composer .hint{font-size:0.72rem;color:var(--muted);margin-bottom:14px}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:0.74rem;color:var(--muted);margin-bottom:5px;font-weight:600}
+  .field label small{color:#5a6a85;font-weight:400}
+  .field input,.field textarea,.field select{
+    width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;
+    color:var(--text);font-family:var(--font);font-size:0.82rem;padding:9px 11px;outline:none;transition:border .15s
+  }
+  .field input:focus,.field textarea:focus,.field select:focus{border-color:var(--accent)}
+  .field textarea{resize:vertical;min-height:42px}
+  .field .varhelp{font-size:0.66rem;color:#5a6a85;margin-top:5px;line-height:1.5}
+  .field .varhelp code{background:var(--bg);padding:1px 5px;border-radius:4px;border:1px solid var(--border);color:var(--accent)}
+  .presets{display:flex;gap:6px;flex-wrap:wrap}
+  .pbtn{background:var(--card2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:7px 11px;font-size:0.74rem;cursor:pointer;font-family:var(--font);transition:all .15s}
+  .pbtn:hover{border-color:var(--accent);background:#222d44}
+  .pbtn.active{border-color:var(--accent);background:rgba(0,212,255,0.12);color:var(--accent)}
+  .chiprow{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:6px}
+  .chip{background:var(--card2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:5px 9px;font-size:0.7rem;cursor:pointer;font-family:var(--font)}
+  .chip:hover{border-color:var(--accent)}
+  .logo-preview{margin-top:8px;min-height:36px;display:flex;align-items:center;background:#fff;border-radius:6px;padding:6px 10px;width:fit-content}
+  .logo-preview span.nv{color:#999;font-size:0.72rem;font-family:var(--font)}
+
+  .color-row{display:flex;gap:8px;align-items:center}
+  .color-row input[type=color]{width:48px;height:38px;padding:2px;border:1px solid var(--border);border-radius:8px;background:var(--bg);cursor:pointer}
+  .save-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;border-top:1px solid var(--border);padding-top:14px}
+
+  .preview-side{}
+  .tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+  .tab{padding:9px 16px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;font-size:0.82rem;font-weight:600;transition:all .2s}
+  .tab.active{background:var(--accent);color:#001;border-color:var(--accent)}
+  .tab:hover{border-color:var(--accent)}
+
+  .scenario-toggle{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+  .scn{padding:8px 14px;border-radius:8px;font-size:0.76rem;cursor:pointer;border:1px solid var(--border);background:var(--card);color:var(--muted);font-weight:600}
+  .scn.active.real{background:rgba(16,185,129,0.15);border-color:var(--green);color:var(--green)}
+  .scn.active.fallback{background:rgba(245,158,11,0.15);border-color:var(--yellow);color:var(--yellow)}
+
+  .panel{display:none}
+  .panel.active{display:block}
+
+  .live-badge{display:inline-flex;align-items:center;gap:6px;font-size:0.7rem;color:var(--green);font-weight:600;margin-bottom:10px}
+  .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.35}}
+
+  .frame-wrap{background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,0.4)}
+  .frame-wrap iframe{width:100%;height:640px;border:none;display:block}
+
+  .json-card{background:#0d1117;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .json-header{background:#161b22;padding:12px 18px;border-bottom:1px solid var(--border);font-size:0.78rem;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .json-header .method{background:var(--green);color:#001;padding:2px 8px;border-radius:4px;font-weight:700;font-size:0.72rem}
+  .json-body{padding:18px;font-family:'SF Mono',Monaco,Consolas,monospace;font-size:0.82rem;color:#c9d1d9;overflow-x:auto;line-height:1.5;white-space:pre}
+  .jk{color:#79c0ff}.js{color:#a5d6ff}.jn{color:#f0883e}.jb{color:#ffa657}.jc{color:#8b949e}
+
+  .info-box{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:16px;font-size:0.82rem;color:var(--muted)}
+  .info-box strong{color:var(--text)}
+  .info-box ul{margin-top:8px;padding-left:18px}
+  .info-box li{margin-bottom:4px}
+
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--card2);border:1px solid var(--green);color:var(--text);padding:12px 20px;border-radius:10px;font-size:0.84rem;box-shadow:0 8px 24px rgba(0,0,0,0.4);opacity:0;transition:opacity .3s,bottom .3s;pointer-events:none;z-index:50}
+  .toast.show{opacity:1;bottom:34px}
+
+  .small-link{color:var(--accent);text-decoration:none;font-size:0.78rem}
+  .top-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px}
+</style>
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body>
+
+<div class="top-bar">
+  <h1>⚡ <span>SOS WALLETS</span> — Notification Preview</h1>
+  <a class="small-link" href="index.html">← Back to app</a>
+</div>
+<p class="sub">Live composer demo. Edit any field on the left and the email / webhook on the right updates instantly. Toggle between Real Send (on-chain tx) and Notify-Only (fallback, no funds) to see exactly what the recipient gets.</p>
+
+<div class="layout">
+
+  <!-- ============ COMPOSER (LEFT) ============ -->
+  <div class="composer">
+    <h2>🎨 Notification Composer</h2>
+    <p class="hint">These are the same settings saved in the app's Notification Template Designer. Changes here preview live below.</p>
+
+    <div class="field">
+      <label>Quick Start — Preset Templates</label>
+      <div class="presets" id="preset-list"></div>
+    </div>
+
+    <div class="field">
+      <label>Sender / Brand Name <small>(who the notification is from)</small></label>
+      <input id="tmpl-sender" placeholder="e.g. GlobalPay, CryptoNotify, John Doe">
+    </div>
+
+    <div class="field">
+      <label>Logo Image URL <small>(paste any logo URL, or pick a preset)</small></label>
+      <input id="tmpl-logo" placeholder="https://example.com/logo.png" oninput="renderLogoPreview();renderAll()">
+      <div class="chiprow">
+        <span style="font-size:0.68rem;color:var(--muted);">Presets:</span>
+        <button class="chip" onclick="setLogoPreset('')">None</button>
+        <button class="chip" onclick="setLogoPreset('bank')">🏦 Bank</button>
+        <button class="chip" onclick="setLogoPreset('crypto')">₿ Crypto</button>
+        <button class="chip" onclick="setLogoPreset('wallet')">👛 Wallet</button>
+        <button class="chip" onclick="setLogoPreset('shield')">🛡️ Secure</button>
+        <button class="chip" onclick="setLogoPreset('bolt')">⚡ Bolt</button>
+      </div>
+      <div class="logo-preview" id="logo-preview"><span class="nv">No logo selected</span></div>
+    </div>
+
+    <div class="field">
+      <label>Brand Color</label>
+      <div class="color-row">
+        <input id="tmpl-color" type="color" value="#0066ff" oninput="renderAll()">
+        <span style="font-size:0.7rem;color:var(--muted);">Email header & button color</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Email Subject Line</label>
+      <input id="tmpl-subject" oninput="renderAll()" placeholder="🔔 Incoming Deposit: {amount} {symbol} is on the way">
+      <div class="varhelp">Variables: <code>{amount}</code> <code>{symbol}</code> <code>{from}</code> <code>{network}</code> <code>{sender}</code></div>
+    </div>
+
+    <div class="field">
+      <label>Greeting Line</label>
+      <input id="tmpl-greeting" oninput="renderAll()" placeholder="Hello,">
+    </div>
+
+    <div class="field">
+      <label>Opening Message</label>
+      <textarea id="tmpl-intro" rows="2" oninput="renderAll()" placeholder="A deposit is incoming to your wallet."></textarea>
+    </div>
+
+    <div class="field">
+      <label>Action Button — Label</label>
+      <input id="tmpl-btn-label" oninput="renderAll()" placeholder="Track Transaction">
+    </div>
+
+    <div class="field">
+      <label>Action Button — Link URL <small>(where the button sends the recipient)</small></label>
+      <input id="tmpl-btn-url" oninput="renderAll()" placeholder="https://etherscan.io/tx/{txHash}">
+      <div class="chiprow">
+        <span style="font-size:0.68rem;color:var(--muted);">Link presets:</span>
+        <button class="chip" onclick="setLinkPreset('etherscan')">Etherscan</button>
+        <button class="chip" onclick="setLinkPreset('bscscan')">BscScan</button>
+        <button class="chip" onclick="setLinkPreset('polygonscan')">PolygonScan</button>
+        <button class="chip" onclick="setLinkPreset('custom')">Custom Page</button>
+        <button class="chip" onclick="setLinkPreset('none')">No Button</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Footer Note <small>(small text at the bottom)</small></label>
+      <input id="tmpl-footer" oninput="renderAll()" placeholder="This is an automated notification. Do not reply.">
+    </div>
+
+    <div class="save-row">
+      <button class="pbtn" style="border-color:var(--green);color:var(--green)" onclick="saveTemplate()">💾 Save to Browser</button>
+      <button class="pbtn" onclick="loadSavedTemplate()">↩️ Load Saved</button>
+      <button class="pbtn" onclick="resetTemplate()">↺ Reset Default</button>
+    </div>
+  </div>
+
+  <!-- ============ PREVIEW (RIGHT) ============ -->
+  <div class="preview-side">
+    <div class="live-badge"><span class="live-dot"></span> Live preview — updates as you type</div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('email',this)">✉️ Email Notification</div>
+      <div class="tab" onclick="switchTab('webhook',this)">🔗 Webhook Payload (JSON)</div>
+    </div>
+
+    <div class="scenario-toggle">
+      <div class="scn active real" onclick="switchScn('real',this)">🚀 Real Send (with on-chain tx)</div>
+      <div class="scn active fallback" onclick="switchScn('fallback',this)">🔔 Notify-Only (fallback, no funds)</div>
+    </div>
+
+    <!-- EMAIL PANEL -->
+    <div class="panel active" id="panel-email">
+      <div class="info-box">
+        <strong>How the email reaches the recipient:</strong>
+        <ul>
+          <li>You enter the recipient's email in the "Recipient email" field in the app</li>
+          <li>After sending, an email opens pre-filled with the subject and message below</li>
+          <li>Tap "Send Email Notification Now" → it opens their mail app with everything filled in</li>
+          <li>The recipient gets the email shown below in their inbox</li>
+        </ul>
+      </div>
+      <div class="frame-wrap" id="email-frame-wrap"></div>
+    </div>
+
+    <!-- WEBHOOK PANEL -->
+    <div class="panel" id="panel-webhook">
+      <div class="info-box">
+        <strong>How the webhook reaches the recipient:</strong>
+        <ul>
+          <li>You enter a webhook URL (e.g. a Discord/Slack/Telegram bot endpoint, or your own server)</li>
+          <li>The app sends a POST request with the JSON payload below to that URL</li>
+          <li>The recipient's system receives it and can display it however they want (Discord message, push notification, dashboard alert, etc.)</li>
+          <li>This is the raw data your recipient's system receives — shown below</li>
+        </ul>
+      </div>
+      <div class="json-card">
+        <div class="json-header"><span class="method">POST</span> <span>→ recipient's webhook URL</span> <span style="margin-left:auto">Content-Type: application/json</span></div>
+        <div class="json-body" id="webhook-json"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===== Template logic (mirrors app.js so the preview is a faithful live demo) ===== */
+const LOGO_PRESETS = {
+  '':       { type:'none',   emoji:'',    url:'' },
+  'bank':   { type:'emoji',  emoji:'🏦',  url:'' },
+  'crypto': { type:'emoji',  emoji:'₿',   url:'' },
+  'wallet': { type:'emoji',  emoji:'👛',  url:'' },
+  'shield': { type:'emoji',  emoji:'🛡️',  url:'' },
+  'bolt':   { type:'emoji',  emoji:'⚡',  url:'' },
+};
+
+const LINK_PRESETS = {
+  'etherscan':    { label:'Track Transaction', url:'https://etherscan.io/tx/{txHash}' },
+  'bscscan':      { label:'Track Transaction', url:'https://bscscan.com/tx/{txHash}' },
+  'polygonscan':  { label:'Track Transaction', url:'https://polygonscan.com/tx/{txHash}' },
+  'custom':       { label:'View Details', url:'https://your-landing-page.com/deposit' },
+  'none':         { label:'', url:'' },
+};
+
+const TEMPLATE_PRESETS = [
+  { id:'default', name:'📋 Default', icon:'📋', sender:'SOS WALLETS', logo:'', color:'#0066ff',
+    subject:'🔔 Incoming Deposit: {amount} {symbol} is on the way', greeting:'Hello,', intro:'A deposit is incoming to your wallet.',
+    btnLabel:'Track Transaction', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'This is an automated notification. Do not reply to this email.' },
+  { id:'bank', name:'🏦 Bank-Style', icon:'🏦', sender:'GlobalPay Banking', logo:'bank', color:'#0a4d2e',
+    subject:'Deposit Confirmation — {amount} {symbol} Incoming', greeting:'Dear Valued Customer,', intro:'We are notifying you of an incoming deposit to your account. Please review the transaction details below.',
+    btnLabel:'View Transaction Details', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'This is an automated message from GlobalPay Banking. Please do not reply to this email. For support, contact support@globalpay.example.' },
+  { id:'crypto', name:'₿ Crypto Exchange', icon:'₿', sender:'CryptoNotify', logo:'crypto', color:'#f7931a',
+    subject:'⚡ {amount} {symbol} Deposit Incoming — CryptoNotify', greeting:'Hey there 👋', intro:"You've got an incoming deposit! Here are the details:",
+    btnLabel:'Track on Blockchain', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'CryptoNotify — Real-time deposit alerts. Stay ahead of your transactions.' },
+  { id:'fintech', name:'💳 Fintech / Modern', icon:'💳', sender:'PayFlow', logo:'bolt', color:'#6c5ce7',
+    subject:'💰 You\'re receiving {amount} {symbol}', greeting:'Hi there,', intro:"Someone is sending you a deposit. Here's everything you need to know.",
+    btnLabel:'See Deposit Details', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'Sent with care by PayFlow. Need help? Tap the button above.' },
+  { id:'secure', name:'🛡️ Security Alert', icon:'🛡️', sender:'SecureWallet Alert', logo:'shield', color:'#1e3a5f',
+    subject:'⚠️ Incoming Transfer Alert: {amount} {symbol}', greeting:'Hello,', intro:'A transfer is incoming to your secured wallet. Please verify the details below and confirm once received.',
+    btnLabel:'Verify Transaction', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'SecureWallet — Keeping your assets safe. Never share your private keys.' },
+  { id:'personal', name:'👤 Personal / Casual', icon:'👤', sender:'', logo:'', color:'#0066ff',
+    subject:'Sending you {amount} {symbol} 💸', greeting:'Hey!', intro:"Just letting you know I'm sending you a deposit. Should arrive soon!",
+    btnLabel:'Check It Out', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'' },
+  { id:'minimal', name:'✨ Minimal', icon:'✨', sender:'', logo:'', color:'#333333',
+    subject:'Incoming: {amount} {symbol}', greeting:'', intro:'A deposit is incoming.',
+    btnLabel:'View', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'' },
+];
+
+const STORE_KEY = 'nw_tmpl_preview';
+let currentTab='email', currentScn='real';
+
+const DEMO = {
+  amount:'0.5', symbol:'ETH',
+  from:'0x742d35Cc6634C0532925a3b844Bc9e7595f0b51b',
+  recipient:'0xAbC1234567890defGhi456', network:'Ethereum Mainnet',
+  memo:'Payment for Invoice #1234',
+  txHash:'0xa1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890',
+  time:new Date().toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'})
+};
+
+function fillTemplateVars(str, vars){
+  if(!str) return '';
+  return str.replace(/\{amount\}/g,vars.amount||'').replace(/\{symbol\}/g,vars.symbol||'')
+    .replace(/\{from\}/g,vars.from||'').replace(/\{network\}/g,vars.network||'')
+    .replace(/\{txHash\}/g,vars.txHash||'').replace(/\{sender\}/g,vars.sender||'')
+    .replace(/\{recipient\}/g,vars.recipient||'').replace(/\{memo\}/g,vars.memo||'');
+}
+
+function readTemplateFromForm(){
+  const g=id=>{const el=document.getElementById(id);return el?el.value:'';};
+  return { sender:g('tmpl-sender'), logo:g('tmpl-logo'), color:g('tmpl-color')||'#0066ff',
+    subject:g('tmpl-subject'), greeting:g('tmpl-greeting'), intro:g('tmpl-intro'),
+    btnLabel:g('tmpl-btn-label'), btnUrl:g('tmpl-btn-url'), footer:g('tmpl-footer') };
+}
+
+function buildHtmlEmail(tpl, vars){
+  const sender=fillTemplateVars(tpl.sender,vars)||'Notification';
+  const subject=fillTemplateVars(tpl.subject,vars);
+  const greeting=fillTemplateVars(tpl.greeting,vars);
+  const intro=fillTemplateVars(tpl.intro,vars);
+  const footer=fillTemplateVars(tpl.footer,vars);
+  const color=tpl.color||'#0066ff';
+  const btnLabel=fillTemplateVars(tpl.btnLabel,vars);
+  const btnUrl=fillTemplateVars(tpl.btnUrl,vars);
+  const statusLine=vars.notifyOnly?'Alert only — no on-chain transaction has been broadcast yet. The sender will complete the transfer separately.':'Pending — awaiting on-chain confirmation';
+  let logoHtml='';
+  if(tpl.logo && tpl.logo.startsWith('http')) logoHtml='<img src="'+tpl.logo+'" style="height:40px;max-width:160px;object-fit:contain;background:#fff;padding:4px;border-radius:6px;" alt="logo">';
+  else if(LOGO_PRESETS[tpl.logo] && LOGO_PRESETS[tpl.logo].emoji) logoHtml='<span style="font-size:32px;">'+LOGO_PRESETS[tpl.logo].emoji+'</span>';
+  let btnHtml='';
+  if(btnLabel && btnUrl) btnHtml='<div style="text-align:center;margin:28px 0;"><a href="'+btnUrl+'" style="display:inline-block;background:'+color+';color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:700;font-size:15px;">'+btnLabel+'</a></div>';
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>'+
+'<body style="margin:0;padding:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Arial,sans-serif;">'+
+'<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:20px;"><tr><td align="center">'+
+'<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);max-width:560px;">'+
+'<tr><td style="background:'+color+';padding:24px 32px;text-align:left;">'+
+(logoHtml?'<div style="margin-bottom:8px;">'+logoHtml+'</div>':'')+
+'<div style="color:#ffffff;font-size:20px;font-weight:700;">'+sender+'</div></td></tr>'+
+'<tr><td style="padding:32px;">'+
+'<div style="font-size:18px;font-weight:700;color:#111;margin-bottom:16px;">'+subject+'</div>'+
+(greeting?'<p style="font-size:15px;color:#333;margin:0 0 12px;">'+greeting+'</p>':'')+
+'<p style="font-size:15px;color:#333;margin:0 0 20px;line-height:1.6;">'+intro+'</p>'+
+'<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fa;border:1px solid #e9ecef;border-radius:8px;margin:16px 0;">'+
+'<tr><td style="padding:20px;"><div style="font-size:13px;color:#666;margin-bottom:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Transaction Details</div>'+
+'<table width="100%" cellpadding="4" cellspacing="0" style="font-size:14px;color:#333;">'+
+'<tr><td style="color:#888;width:120px;">Amount</td><td style="font-weight:700;">'+vars.amount+' '+vars.symbol+'</td></tr>'+
+'<tr><td style="color:#888;">From</td><td style="font-family:monospace;font-size:12px;">'+(vars.notifyOnly?'(wallet not connected)':vars.from)+'</td></tr>'+
+'<tr><td style="color:#888;">To</td><td style="font-family:monospace;font-size:12px;">'+vars.recipient+'</td></tr>'+
+'<tr><td style="color:#888;">Network</td><td>'+vars.network+'</td></tr>'+
+(vars.memo&&vars.memo!=='(none)'?'<tr><td style="color:#888;">Memo</td><td>'+vars.memo+'</td></tr>':'')+
+'<tr><td style="color:#888;">Tx Hash</td><td style="font-family:monospace;font-size:12px;">'+(vars.notifyOnly?'(pending — no on-chain tx)':vars.txHash)+'</td></tr>'+
+'<tr><td style="color:#888;">Status</td><td>'+statusLine+'</td></tr>'+
+'<tr><td style="color:#888;">Time</td><td>'+vars.time+'</td></tr>'+
+'</table></td></tr></table>'+
+btnHtml+
+'<p style="font-size:13px;color:#888;margin:20px 0 0;line-height:1.5;">The funds will appear once the transaction is confirmed by the network. Track it using the Tx Hash on a '+vars.network+' block explorer.</p>'+
+'</td></tr>'+
+(footer?'<tr><td style="padding:20px 32px;background:#f8f9fa;border-top:1px solid #e9ecef;"><p style="font-size:12px;color:#999;margin:0;line-height:1.5;">'+footer+'</p></td></tr>':'')+
+'</table></td></tr></table></body></html>';
+}
+
+function buildTextEmail(tpl, vars){
+  const sender=fillTemplateVars(tpl.sender,vars)||'Notification';
+  const greeting=fillTemplateVars(tpl.greeting,vars);
+  const intro=fillTemplateVars(tpl.intro,vars);
+  const footer=fillTemplateVars(tpl.footer,vars);
+  const statusLine=vars.notifyOnly?'Alert only — no on-chain transaction has been broadcast yet. The sender will complete the transfer separately.':'Pending — awaiting on-chain confirmation';
+  let text='';
+  if(greeting) text+=greeting+'\n\n';
+  text+=intro+'\n\n';
+  text+='  Amount:   '+vars.amount+' '+vars.symbol+'\n';
+  text+='  From:     '+(vars.notifyOnly?'(wallet not connected)':vars.from)+'\n';
+  text+='  To:       '+vars.recipient+'\n';
+  text+='  Network:  '+vars.network+'\n';
+  if(vars.memo&&vars.memo!=='(none)') text+='  Memo:     '+vars.memo+'\n';
+  text+='  Tx Hash:  '+(vars.notifyOnly?'(pending — no on-chain tx)':vars.txHash)+'\n';
+  text+='  Status:   '+statusLine+'\n';
+  text+='  Time:     '+vars.time+'\n\n';
+  text+='The funds will appear once the transaction is confirmed by the network.\n';
+  text+='Track it using the Tx Hash on a '+vars.network+' block explorer.\n\n';
+  if(tpl.btnLabel&&tpl.btnUrl) text+='→ '+fillTemplateVars(tpl.btnLabel,vars)+': '+fillTemplateVars(tpl.btnUrl,vars)+'\n\n';
+  if(sender) text+='— '+sender+'\n';
+  if(footer) text+=footer+'\n';
+  return text;
+}
+
+function escAttr(s){return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;');}
+function escHtml(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+function renderPresets(){
+  const list=document.getElementById('preset-list'); list.innerHTML='';
+  TEMPLATE_PRESETS.forEach(p=>{
+    const b=document.createElement('button'); b.className='pbtn'; b.textContent=p.icon+' '+p.name.replace(p.icon+' ','');
+    b.onclick=function(){applyPreset(p.id,this);}; list.appendChild(b);
+  });
+}
+
+function applyPreset(id,btn){
+  const p=TEMPLATE_PRESETS.find(x=>x.id===id); if(!p) return;
+  const t=Object.assign({},p); delete t.id; delete t.name; delete t.icon;
+  populateForm(t); renderAll(); showToast('Applied: '+p.name.replace(p.icon+' ',''));
+  document.querySelectorAll('.pbtn').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+}
+
+function populateForm(t){
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.value=v||'';};
+  set('tmpl-sender',t.sender); set('tmpl-logo',t.logo); set('tmpl-color',t.color);
+  set('tmpl-subject',t.subject); set('tmpl-greeting',t.greeting); set('tmpl-intro',t.intro);
+  set('tmpl-btn-label',t.btnLabel); set('tmpl-btn-url',t.btnUrl); set('tmpl-footer',t.footer);
+  renderLogoPreview();
+}
+
+function renderLogoPreview(){
+  const box=document.getElementById('logo-preview'); const val=document.getElementById('tmpl-logo').value;
+  if(!val){box.innerHTML='<span class="nv">No logo selected</span>';return;}
+  if(val.startsWith('http')) box.innerHTML='<img src="'+val+'" style="height:30px;max-width:120px;border-radius:4px;" onerror="this.parentElement.innerHTML=\'<span class=nv>⚠️ Image failed</span>\'">';
+  else if(LOGO_PRESETS[val]&&LOGO_PRESETS[val].emoji) box.innerHTML='<span style="font-size:26px;">'+LOGO_PRESETS[val].emoji+'</span>';
+  else box.innerHTML='<span class="nv">No logo selected</span>';
+}
+
+function setLogoPreset(key){
+  const el=document.getElementById('tmpl-logo'); el.value=LOGO_PRESETS[key]?key:''; renderLogoPreview(); renderAll();
+}
+function setLinkPreset(key){
+  const p=LINK_PRESETS[key]; if(!p) return;
+  document.getElementById('tmpl-btn-label').value=p.label;
+  document.getElementById('tmpl-btn-url').value=p.url; renderAll();
+}
+
+function saveTemplate(){ localStorage.setItem(STORE_KEY,JSON.stringify(readTemplateFromForm())); showToast('Template saved to browser ✓'); }
+function loadSavedTemplate(){
+  try{const t=JSON.parse(localStorage.getItem(STORE_KEY)||'null');if(t){populateForm(t);renderAll();showToast('Loaded saved template');}else showToast('No saved template found');}catch(e){showToast('No saved template found');}
+}
+function resetTemplate(){
+  const p=TEMPLATE_PRESETS[0]; const t=Object.assign({},p); delete t.id; delete t.name; delete t.icon;
+  populateForm(t); renderAll(); showToast('Reset to default');
+}
+
+function getVars(){
+  const notifyOnly=currentScn==='fallback';
+  return Object.assign({},DEMO,{ sender:document.getElementById('tmpl-sender').value, notifyOnly });
+}
+
+function switchTab(tab,el){
+  currentTab=tab;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); el.classList.add('active');
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+tab).classList.add('active');
+  renderAll();
+}
+function switchScn(scn,el){
+  currentScn=scn;
+  document.querySelectorAll('.scn').forEach(s=>s.classList.remove('active')); el.classList.add('active');
+  renderAll();
+}
+
+function renderAll(){
+  const tpl=readTemplateFromForm(); const vars=getVars();
+  const wrap=document.getElementById('email-frame-wrap');
+  wrap.innerHTML='<iframe srcdoc="'+escAttr(buildHtmlEmail(tpl,vars))+'" sandbox="allow-same-origin"></iframe>';
+  const payload={
+    event:vars.notifyOnly?'incoming_deposit_alert':'incoming_deposit',
+    recipient:vars.recipient, amount:vars.amount, symbol:vars.symbol,
+    from:vars.notifyOnly?'(wallet not connected)':vars.from,
+    txHash:vars.notifyOnly?'(pending — no on-chain tx)':vars.txHash,
+    network:vars.network, memo:vars.memo,
+    status:vars.notifyOnly?'alert_only_no_tx':'pending', notifyOnly:vars.notifyOnly,
+    sender:tpl.sender||'', timestamp:new Date().toISOString(),
+    subject:fillTemplateVars(tpl.subject,vars), message:buildTextEmail(tpl,vars), html:'<rendered html email>'
+  };
+  document.getElementById('webhook-json').innerHTML=syntaxHighlight(JSON.stringify(payload,null,2));
+}
+
+function syntaxHighlight(json){
+  json=escHtml(json);
+  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,m=>{
+    let cls='jn';
+    if(/^"/.test(m)){ cls=/:$/.test(m)?'jk':'js'; }
+    else if(/true|false/.test(m)) cls='jb';
+    else if(/null/.test(m)) cls='jc';
+    return '<span class="'+cls+'">'+m+'</span>';
+  });
+}
+
+function showToast(msg){
+  const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(window._tt); window._tt=setTimeout(()=>t.classList.remove('show'),1800);
+}
+
+renderPresets();
+const _p=TEMPLATE_PRESETS[0]; const _t=Object.assign({},_p); delete _t.id; delete _t.name; delete _t.icon;
+populateForm(_t);
+renderAll();
+</script>
+</body>
+</html>
