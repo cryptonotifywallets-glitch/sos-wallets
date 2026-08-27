@@ -2133,8 +2133,8 @@ function saveEmailJSConfig(){
    "email received but no content / shows {subject}" issue. */
 function copyEmailJSTemplate(){
   const code=document.getElementById('emailjs-template-code');
-  if(!code){ toast('error','Not Found','Template code block not found.'); return; }
-  const text=code.textContent||code.innerText;
+  if(!code){ /* DOM block missing - use the JS constant instead */ }
+  const text=(code&&(code.textContent||code.innerText))||EMAILJS_TEMPLATE_BODY;
   // Use the Clipboard API if available, fallback to a temp textarea
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(text).then(()=>{
@@ -2159,6 +2159,69 @@ function fallbackCopy(text){
 }
 
 function clearEmailJSConfig(){
+/* The correct EmailJS template body kept as a JS constant so it works even
+   if the HTML <pre> block is missing, and so fixEmailTemplateNow() can copy
+   it without depending on the DOM.  Uses {{{message}}} (TRIPLE braces) so
+   HTML renders instead of being escaped.  */
+var EMAILJS_TEMPLATE_BODY =
+  '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">\n'+
+  '  <h2 style="color:#4f7fff;">{{subject}}</h2>\n'+
+  '  <div style="font-size:15px;line-height:1.6;color:#333;">\n'+
+  '    {{{message}}}\n'+
+  '  </div>\n'+
+  '  <hr style="border:none;border-top:1px solid #eee;margin:20px 0;">\n'+
+  '  <p style="font-size:12px;color:#999;">Sent from SOS WALLETS v3</p>\n'+
+  '</div>';
+
+/* One-click fix for "email received but no content": copies the correct
+   template to clipboard AND opens the EmailJS dashboard so the user can
+   paste it. The user's template has wrong placeholder syntax so nothing
+   renders — this replaces it with the correct {{double_brace}} and
+   {{{triple_brace}}} syntax. */
+function fixEmailTemplateNow(){
+  const cfg=getEmailConfig();
+  var templateId=(cfg&&cfg.templateId)||'';
+  var body=EMAILJS_TEMPLATE_BODY;
+  // 1) Copy correct template body to clipboard
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(body).then(()=>{
+      toast('success','Template Copied!','Paste it into your EmailJS template Content (HTML ON).');
+    }).catch(()=>{ fallbackCopySilent(body); });
+  } else {
+    fallbackCopySilent(body);
+  }
+  // 2) Open EmailJS dashboard template editor in a new tab
+  var url='https://dashboard.emailjs.com/admin/templates';
+  if(templateId) url='https://dashboard.emailjs.com/admin/templates/'+templateId;
+  try{ window.open(url,'_blank'); }catch(e){}
+  // 3) Clear step-by-step instructions
+  var steps=
+    'FIX STEPS - email received but no content:\n\n'+
+    '1. A new tab opened to your EmailJS template editor.\n'+
+    '2. The CORRECT template was copied to your clipboard.\n'+
+    '3. In EmailJS: turn the HTML toggle ON.\n'+
+    '4. Delete everything in the Content box.\n'+
+    '5. PASTE (Ctrl+V or Cmd+V).\n'+
+    '6. Set: To Email = {{to_email}}, From Name = {{from_name}}, Subject = {{subject}}.\n'+
+    '7. Click SAVE.\n'+
+    '8. Come back here and click Send Test Email.\n\n'+
+    'Why: EmailJS needs {{double_braces}} for text and {{{triple_braces}}} for HTML.\n'+
+    'Your old template used {single_braces} so nothing rendered.';
+  var st=document.getElementById('emailjs-status');
+  if(st){ st.className='emailjs-status ok'; st.style.whiteSpace='pre-line'; st.textContent=steps; }
+  alert(steps);
+}
+
+/* Silent fallback copy - returns true on success, no toast (caller shows its own). */
+function fallbackCopySilent(text){
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+    return true;
+  }catch(e){ return false; }
+}
+
   localStorage.removeItem(userKey(K.emailjs));
   ['emailjs-service','emailjs-template','emailjs-publickey','emailjs-fromname','emailjs-test-to','w3f-access-key','w3f-owner-email'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
   const prov=document.getElementById('email-provider'); if(prov) prov.value='none';
@@ -2526,7 +2589,7 @@ try{
     'renderTokenBalancePreview','getTokenBalance','ethCall','encodeCall','hexToAscii','keccakHex','toUtf8Bytes','keccak256','sendERC20',
     'loadLivePortfolio','fetchLivePrices',
     'addSchedJob','getSchedJobs','saveSchedJobs','fmtInterval','buildSchedBody','fireSchedJob',
-    'startSchedTimer','resumeSchedJobs','stopSchedJobs','toggleSchedJob','runSchedJobNow','deleteSchedJob','renderSchedJobs','copyEmailJSTemplate','fallbackCopy',
+    'startSchedTimer','resumeSchedJobs','stopSchedJobs','toggleSchedJob','runSchedJobNow','deleteSchedJob','renderSchedJobs','copyEmailJSTemplate','fallbackCopy','fixEmailTemplateNow','fallbackCopySilent',
     'renderWallets','renderHero','renderStats','renderTokens','renderSimTxs','renderPending',
     'renderAddrBook','renderAddrQuick','renderNotifLog',
     'buildHtmlEmail','buildTextEmail','fillTemplateVars','sendRecipientNotification',
