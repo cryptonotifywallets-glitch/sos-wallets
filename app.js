@@ -2041,7 +2041,7 @@ function loadEmailJSConfig(){
   const cfg=getEmailConfig();
   // provider selector
   const prov=document.getElementById('email-provider');
-  if(prov) prov.value = (cfg&&cfg.provider)||'none';
+  if(prov) prov.value = (cfg&&cfg.provider)||'web3forms';
   // emailjs fields
   const svc=document.getElementById('emailjs-service');
   const tpl=document.getElementById('emailjs-template');
@@ -2092,7 +2092,7 @@ function updateEmailJSStatus(){
   } else if(cfg.provider==='web3forms'){
     msg='✅ Web3Forms configured — a copy of every notification is delivered to your inbox automatically. (EmailJS can reach the recipient directly — see below.)';
   } else if(cfg.provider==='emailjs'){
-    msg='✅ EmailJS configured — notifications are sent directly to each recipient\'s inbox automatically.';
+    msg='✅ EmailJS configured — notifications are sent directly to each recipient\'s inbox. If emails arrive with blank content, click “⚡ Fix Email Template” above (your dashboard template needs {{double_braces}}). Tip: Web3Forms works out-of-the-box with no template setup.';
   } else { msg='Not configured.'; }
   if(el) el.textContent=msg;
 }
