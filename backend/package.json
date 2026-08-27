@@ -1,0 +1,19 @@
+{
+  "name": "sos-wallets-backend",
+  "version": "1.0.0",
+  "description": "Backend API for SOS WALLETS - user accounts, data sync, email delivery",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^6.9.14",
+    "better-sqlite3": "^11.1.2",
+    "dotenv": "^16.4.5"
+  }
+}
