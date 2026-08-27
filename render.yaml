@@ -1,0 +1,43 @@
+# Render Blueprint — SOS WALLETS Backend + Frontend
+# https://render.com/docs/blueprint-spec
+# After pushing this file, go to Render → New → Blueprint → select your repo.
+# Render will read this file and create the service automatically.
+
+services:
+  - type: web
+    name: soswallets
+    runtime: node
+    plan: free
+    # Render runs this from the repo root. The backend lives in /backend.
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    # Render sets PORT automatically — server.js reads process.env.PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # JWT secret — generate a random string and paste it in Render dashboard
+      - key: JWT_SECRET
+        generateValue: true
+      # Admin credentials — CHANGE THESE in Render dashboard before first deploy
+      - key: ADMIN_EMAIL
+        value: admin@soswallets.app
+      - key: ADMIN_PASS
+        value: admin123456
+      # SMTP (email) — set these in Render dashboard if you want email working
+      # See backend/.env.example for Gmail setup instructions
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: SOS Wallets
+      - key: EMAIL_FROM_ADDRESS
+        sync: false
+      # CORS — allow your GitHub Pages frontend if you host it separately
+      - key: CORS_ORIGIN
+        value: "*"

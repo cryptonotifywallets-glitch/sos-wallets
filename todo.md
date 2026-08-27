@@ -37,5 +37,5 @@
 - [x] Test admin API endpoints (login, stats, users — all working)
 - [x] Create admin.html dashboard page
 - [x] Test admin.html in browser (login, stats, tabs, broadcast all work)
-- [ ] Commit & push admin system to GitHub
-- [ ] Inform user of admin credentials
+- [x] Commit & push admin system to GitHub (commit 6e74ef2 pushed)
+- [x] Inform user of admin credentials

@@ -79,6 +79,12 @@ This release (v2) adds **5 major new features**, a complete **mobile usability o
 | `manifest.json` | PWA manifest for "Add to Home Screen" |
 | `sw.js` | Service worker for offline app shell caching |
 | `notification-preview.html` | Standalone preview of notification email templates |
+| `api-client.js` | Frontend module connecting app to backend API |
+| `backend/server.js` | Node.js/Express backend — auth, data sync, email, admin |
+| `backend/admin.html` | Admin dashboard panel (user/tx/email management) |
+| `backend/package.json` | Backend dependencies + scripts |
+| `backend/.env.example` | Backend config template (copy to `.env`) |
+| `render.yaml` | Render.com deployment blueprint (one-click deploy) |
 | `README.md` | This file |
 | `todo.md` | Development task tracker |
 
@@ -146,6 +152,91 @@ By default, SOS WALLETS shows a notification preview + a "Send Email Manually" b
 - **67/67 automated regression tests pass** (jsdom + vm-based test suite verifying wallet detection, deep-links, QR parsing, transaction history, gas estimator, EmailJS config/delivery, and all existing features).
 - Syntax-validated with `node -c`.
 - Live browser-tested: wallet chooser modal, PWA install prompt, QR scan button, gas estimator, transaction history card all confirmed working.
+
+---
+
+## 🖥️ Backend + Admin Panel (NEW)
+
+SOS WALLETS now has an optional **Node.js/Express backend** with SQLite that adds:
+- **Server-side user accounts** (JWT auth + bcrypt password hashing) — no more lost logins on browser reset
+- **Cloud data sync** — wallet data, address book, templates, transaction history saved server-side
+- **SMTP email delivery** — real emails via Nodemailer (Gmail, SendGrid, etc.) — no EmailJS template setup needed
+- **Admin dashboard** at `/admin` — manage users, view all transactions/emails, broadcast to all users
+
+### Deploy to Render.com (free, recommended)
+
+The repo includes a `render.yaml` blueprint for one-click deployment:
+
+1. Go to [Render.com](https://render.com) → sign up / sign in with **GitHub**.
+2. Click **New → Blueprint** → select your `wallets` repo.
+3. Render reads `render.yaml` and auto-creates the web service.
+4. **Before first deploy**, go to the service → **Environment** tab and set:
+   - `ADMIN_EMAIL` — your admin login email (change from default!)
+   - `ADMIN_PASS` — your admin password (change from default!)
+   - `JWT_SECRET` — Render auto-generates this, but you can set your own
+   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM_ADDRESS` — for email (see Gmail setup below)
+5. Click **Manual Deploy → Deploy latest commit**.
+6. Wait ~1-2 min. You'll get a URL like `https://soswallets-xxxx.onrender.com`.
+7. Visit:
+   - **App:** `https://soswallets-xxxx.onrender.com/`
+   - **Admin:** `https://soswallets-xxxx.onrender.com/admin`
+   - **API health:** `https://soswallets-xxxx.onrender.com/api/health`
+
+> ⚠️ **Free tier note:** Render's free tier has an **ephemeral filesystem** — the SQLite database resets on each redeploy. For production, either (a) add a Render persistent disk and set `DB_PATH` to `/opt/data/data.db`, or (b) upgrade to managed PostgreSQL. User accounts created between deploys will be lost on free tier without a persistent disk.
+
+### Run locally
+
+```bash
+cd backend
+npm install
+cp .env.example .env   # then edit .env with your settings
+npm start              # starts on http://localhost:3001
+```
+
+Then open:
+- **App:** http://localhost:3001/
+- **Admin:** http://localhost:3001/admin (default: `admin@soswallets.app` / `admin123456`)
+
+### Gmail SMTP setup (for email delivery)
+
+1. Go to [Google Account → Security](https://myaccount.google.com/security).
+2. Enable **2-Step Verification** (required for App Passwords).
+3. Go to **App Passwords** → generate a password for "Mail".
+4. In `.env` (or Render env vars), set:
+   - `SMTP_HOST=smtp.gmail.com`
+   - `SMTP_PORT=587`
+   - `SMTP_USER=your.email@gmail.com`
+   - `SMTP_PASS=<the 16-char app password>`
+   - `EMAIL_FROM_NAME=SOS Wallets`
+   - `EMAIL_FROM_ADDRESS=your.email@gmail.com`
+
+### Backend API endpoints
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/auth/register` | — | Create account |
+| POST | `/api/auth/login` | — | Login, returns JWT |
+| GET | `/api/auth/me` | user | Get current user |
+| POST | `/api/auth/forgot` | — | Request password reset email |
+| POST | `/api/auth/reset` | — | Reset password with token |
+| GET | `/api/data` | user | Get all synced data |
+| POST | `/api/data` | user | Save data |
+| GET | `/api/data/all` | user | Get all data keys |
+| POST | `/api/data/bulk` | user | Bulk save multiple keys |
+| POST | `/api/transactions` | user | Log a transaction |
+| GET | `/api/transactions` | user | Get transaction log |
+| POST | `/api/email/send` | user | Send an email via SMTP |
+| POST | `/api/email/test` | user | Send a test email |
+| GET | `/api/email/log` | user | Get email log |
+| GET | `/api/health` | — | Health check |
+| GET | `/api/admin/stats` | admin | Dashboard metrics |
+| GET | `/api/admin/users` | admin | List all users |
+| DELETE | `/api/admin/users/:id` | admin | Delete a user |
+| POST | `/api/admin/users/:id/toggle-admin` | admin | Promote/demote admin |
+| GET | `/api/admin/transactions` | admin | All transactions |
+| GET | `/api/admin/email-log` | admin | All email logs |
+| POST | `/api/admin/broadcast` | admin | Email all users |
+| GET | `/admin` | — | Admin dashboard page |
 
 ---
 

@@ -35,8 +35,14 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 app.use(cors({ origin: CORS_ORIGIN === '*' ? true : CORS_ORIGIN.split(','), credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 
-/* ---------- Database (SQLite — zero-config, file-based) ---------- */
-const db = new Database(path.join(__dirname, 'data.db'));
+/* ---------- Database (SQLite — zero-config, file-based) ----------
+   On cloud platforms (Render, Railway, etc.) the filesystem may be
+   ephemeral on free tiers. Set DB_PATH env var to a persistent disk
+   mount path (e.g. /opt/data/data.db) if you attach a persistent disk.
+   Otherwise the DB resets on each redeploy. For production, consider
+   upgrading to a managed PostgreSQL (see README).                                   */
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data.db');
+const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
 db.exec(`
@@ -511,10 +517,23 @@ app.use(express.static(frontendDir));
 app.get('/', (req, res) => res.sendFile(path.join(frontendDir, 'index.html')));
 
 /* ---------- Start server ---------- */
+const PUBLIC_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n  SOS WALLETS Backend running on http://localhost:${PORT}`);
-  console.log(`  Frontend served from: ${frontendDir}`);
-  console.log(`  Email (SMTP): ${getTransporter() ? 'configured ('+process.env.SMTP_USER+')' : 'NOT configured (copy .env.example to .env and set SMTP credentials)'}`);
-  console.log(`  CORS origin: ${CORS_ORIGIN}`);
-  console.log(`  Health check: http://localhost:${PORT}/api/health\n`);
+  console.log(`\n  ============================================`);
+  console.log(`  SOS WALLETS Backend is LIVE`);
+  console.log(`  ============================================`);
+  console.log(`  URL:          ${PUBLIC_URL}`);
+  console.log(`  Admin panel:  ${PUBLIC_URL}/admin`);
+  console.log(`  Frontend:     ${PUBLIC_URL}/`);
+  console.log(`  Frontend dir: ${frontendDir}`);
+  console.log(`  Database:     ${DB_PATH}`);
+  console.log(`  Email (SMTP): ${getTransporter() ? 'configured ('+process.env.SMTP_USER+')' : 'NOT configured (set SMTP_* env vars)'}`);
+  console.log(`  CORS origin:  ${CORS_ORIGIN}`);
+  console.log(`  Health check: ${PUBLIC_URL}/api/health`);
+  if (!process.env.DB_PATH && process.env.RENDER_EXTERNAL_URL) {
+    console.log(`  ⚠️  WARNING: Free-tier ephemeral filesystem — DB resets on redeploy.`);
+    console.log(`     To keep data: add a persistent disk + set DB_PATH env var.`);
+    console.log(`     Or upgrade to managed PostgreSQL (see README).`);
+  }
+  console.log(`  ============================================\n`);
 });
