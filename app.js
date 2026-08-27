@@ -2128,6 +2128,36 @@ function saveEmailJSConfig(){
   toast('success','Saved','Email delivery config saved.');
 }
 
+/* Copy the ready-made EmailJS template to clipboard so the user can paste
+   it directly into their EmailJS dashboard template. Fixes the common
+   "email received but no content / shows {subject}" issue. */
+function copyEmailJSTemplate(){
+  const code=document.getElementById('emailjs-template-code');
+  if(!code){ toast('error','Not Found','Template code block not found.'); return; }
+  const text=code.textContent||code.innerText;
+  // Use the Clipboard API if available, fallback to a temp textarea
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>{
+      toast('success','Copied!','Paste this into your EmailJS template Content field (HTML toggle ON).');
+    }).catch(()=>{
+      fallbackCopy(text);
+    });
+  } else {
+    fallbackCopy(text);
+  }
+}
+function fallbackCopy(text){
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    toast('success','Copied!','Paste this into your EmailJS template Content field (HTML toggle ON).');
+  }catch(e){
+    toast('error','Copy Failed','Could not copy automatically. Select the text manually and copy.');
+  }
+}
+
 function clearEmailJSConfig(){
   localStorage.removeItem(userKey(K.emailjs));
   ['emailjs-service','emailjs-template','emailjs-publickey','emailjs-fromname','emailjs-test-to','w3f-access-key','w3f-owner-email'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
@@ -2143,28 +2173,37 @@ function clearEmailJSConfig(){
 async function deliverViaWeb3Forms(accessKey, ownerEmail, subject, textBody, htmlBody){
   if(!accessKey) return {ok:false,reason:'web3forms-no-key'};
   try{
-    // Web3Forms accepts any custom fields; they appear in the email body sent to the owner.
+    // Web3Forms default template renders ONLY the {{message}} field in the
+    // email body. So we put the FULL content (HTML if available, else text)
+    // into `message` so it always shows up. We also send a text-only fallback
+    // in a separate field in case the user customised their template.
+    var fullBody = htmlBody || textBody || '';
+    // If we only have text, wrap it so it's readable in HTML email clients
+    if(!htmlBody && textBody){
+      fullBody = textBody.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+    }
     const payload={
       access_key:accessKey,
       subject:subject||'SOS WALLETS Notification',
       from_name:(getEmailConfig()&&getEmailConfig().fromName)||'SOS WALLETS',
-      // custom fields surfaced in the email:
-      message:textBody,
-      html_message:htmlBody,
+      // The default Web3Forms template renders {{message}} - put everything here
+      message: fullBody,
+      // Extra fields in case the user customised their template to use these:
+      text_message: textBody||'',
+      html_message: htmlBody||'',
       notification_copy:'true',
       app:'SOS WALLETS v3'
     };
     if(ownerEmail) payload.email=ownerEmail; // sets reply-to
     const r=await fetch(WEB3FORMS_API,{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'},
       body:JSON.stringify(payload)
     });
     const data=await r.json().catch(()=>({}));
     if(r.ok && data.success) return {ok:true, provider:'web3forms'};
     let reason=(data&&data.message)||('web3forms-error:'+r.status);
-    if(r.status===429) reason='Web3Forms rate limit (429) — too many requests, wait a moment.';
-    if(/invalid access key/i.test(reason)) reason='Invalid Web3Forms Access Key — check the key in Email Delivery settings.';
+    if(r.status===429) reason='Web3Forms rate limit (429) - too many requests, wait a moment.';
+    if(/invalid access key/i.test(reason)) reason='Invalid Web3Forms Access Key - check the key in Email Delivery settings.';
     return {ok:false, reason, raw:JSON.stringify(data), status:r.status};
   }catch(e){ return {ok:false, reason:'network:'+e.message}; }
 }
@@ -2178,7 +2217,20 @@ async function deliverEmailViaEmailJS(toEmail, subject, textBody, htmlBody){
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         service_id:cfg.serviceId, template_id:cfg.templateId, user_id:cfg.publicKey,
-        template_params:{ to_email:toEmail, from_name:cfg.fromName||'SOS WALLETS', subject, message:textBody, html:htmlBody }
+        template_params:{
+          // Recipient
+          to_email:toEmail, to:toEmail, email:toEmail, recipient:toEmail, recipient_email:toEmail,
+          // Sender / from name
+          from_name:cfg.fromName||'SOS WALLETS', sender:cfg.fromName||'SOS WALLETS', name:cfg.fromName||'SOS WALLETS',
+          // Subject
+          subject:subject, title:subject, heading:subject,
+          // Plain text body
+          message:textBody, text:textBody, body:textBody, content:textBody, text_message:textBody,
+          // HTML body - send under multiple names so whatever the template uses, it fills
+          html:htmlBody, html_message:htmlBody, html_content:htmlBody, html_body:htmlBody, message_html:htmlBody,
+          // Meta
+          app:'SOS WALLETS v3', timestamp:new Date().toISOString()
+        }
       })
     });
     if(r.ok) return {ok:true, provider:'emailjs'};
@@ -2474,7 +2526,7 @@ try{
     'renderTokenBalancePreview','getTokenBalance','ethCall','encodeCall','hexToAscii','keccakHex','toUtf8Bytes','keccak256','sendERC20',
     'loadLivePortfolio','fetchLivePrices',
     'addSchedJob','getSchedJobs','saveSchedJobs','fmtInterval','buildSchedBody','fireSchedJob',
-    'startSchedTimer','resumeSchedJobs','stopSchedJobs','toggleSchedJob','runSchedJobNow','deleteSchedJob','renderSchedJobs',
+    'startSchedTimer','resumeSchedJobs','stopSchedJobs','toggleSchedJob','runSchedJobNow','deleteSchedJob','renderSchedJobs','copyEmailJSTemplate','fallbackCopy',
     'renderWallets','renderHero','renderStats','renderTokens','renderSimTxs','renderPending',
     'renderAddrBook','renderAddrQuick','renderNotifLog',
     'buildHtmlEmail','buildTextEmail','fillTemplateVars','sendRecipientNotification',

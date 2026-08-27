@@ -683,6 +683,22 @@
                 <li>⚠️ <strong>Important:</strong> Account → Security → if "Allowed Domains" is on, add this site's origin (<code id="w3-origin-hint"></code>) or enable "Allow API access outside browser". Otherwise EmailJS returns 403.</li>
                 <li>Paste all three IDs below → Save → Send Test Email.</li>
               </ol>
+              <p style="margin-top:16px;color:var(--text);font-weight:600">📋 Copy-paste EmailJS template (fixes "email received but no content")</p>
+              <p style="color:var(--text-muted);font-size:0.82rem;line-height:1.5">If your emails arrive but show <code>{subject}</code> or blank content, your template has the wrong placeholders. EmailJS needs <strong>double curly braces</strong> <code>{{variable}}</code> — not single braces. Paste this exactly into your EmailJS template's Content field (make sure the HTML toggle is ON):</p>
+              <div style="position:relative;margin-top:8px;">
+                <pre id="emailjs-template-code" style="background:#0a0e1a;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:12px;font-size:0.78rem;overflow-x:auto;color:#a8b5d1;white-space:pre-wrap;word-break:break-all;">Subject: {{subject}}
+
+&lt;div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"&gt;
+  &lt;h2 style="color:#4f7fff;"&gt;{{subject}}&lt;/h2&gt;
+  &lt;div style="font-size:15px;line-height:1.6;color:#333;"&gt;
+    {{{message}}}
+  &lt;/div&gt;
+  &lt;hr style="border:none;border-top:1px solid #eee;margin:20px 0;"&gt;
+  &lt;p style="font-size:12px;color:#999;"&gt;Sent from SOS WALLETS v3&lt;/p&gt;
+&lt;/div&gt;</pre>
+                <button class="btn btn-cyan btn-sm" style="position:absolute;top:8px;right:8px;" onclick="copyEmailJSTemplate()">📋 Copy</button>
+              </div>
+              <p style="color:var(--text-muted);font-size:0.78rem;margin-top:8px;line-height:1.5"><strong>Template settings:</strong> To Email = <code>{{to_email}}</code>, From Name = <code>{{from_name}}</code>, Subject = <code>{{subject}}</code>, Reply To = <code>{{to_email}}</code>. Use <code>{{{message}}}</code> (triple braces) in the content body so HTML renders properly.</p>
             </details>
             <div class="form-group" style="margin-top:14px">
               <label class="form-label">EmailJS Service ID</label>
