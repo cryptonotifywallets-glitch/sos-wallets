@@ -1,0 +1,12 @@
+# Nixpacks config for Railway — SOS WALLETS backend
+# https://nixpacks.io/docs/configuration/file
+
+[phases.setup]
+# better-sqlite3 needs build tools (python3, make, g++) for native compilation
+nixPkgs = ["python3", "gcc", "make", "gnumake"]
+
+[phases.build]
+cmds = ["cd backend && npm install"]
+
+[start]
+cmd = "cd backend && node server.js"

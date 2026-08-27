@@ -163,9 +163,49 @@ SOS WALLETS now has an optional **Node.js/Express backend** with SQLite that add
 - **SMTP email delivery** — real emails via Nodemailer (Gmail, SendGrid, etc.) — no EmailJS template setup needed
 - **Admin dashboard** at `/admin` — manage users, view all transactions/emails, broadcast to all users
 
-### Deploy to Render.com (free, recommended)
+### Deploy to Railway.app (recommended — persistent storage included)
 
-The repo includes a `render.yaml` blueprint for one-click deployment:
+Railway gives you a live URL AND a persistent volume (your database survives redeploys, unlike Render's free tier).
+
+**Step 1 — Go to Railway**
+- Visit **https://railway.app** → **Login** → sign in with **GitHub** (use your `cryptonotifywallets-glitch` account)
+- Authorize Railway to access your GitHub
+
+**Step 2 — Create the project**
+- Click **"New Project"** → **"Deploy from GitHub repo"**
+- Select the `sos-wallets` repository
+- Railway auto-detects `railway.json` + `nixpacks.toml` and starts building
+
+**Step 3 — Add a persistent volume (keeps your database safe)**
+- In your project, click the service → **"Settings"** tab
+- Go to **"Volumes"** → **"Add Volume"**
+- Mount path: `/app/backend/data`
+- This ensures `data.db` survives redeploys (your users won't be lost!)
+
+**Step 4 — Set environment variables**
+- Click the service → **"Variables"** tab → add these:
+  - `ADMIN_EMAIL` = your real email (e.g. `you@example.com`)
+  - `ADMIN_PASS` = a strong password
+  - `JWT_SECRET` = any random string (e.g. `mySecretKey123xyz`)
+  - `CORS_ORIGIN` = `*`
+  - For email (optional): `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM_NAME` (SOS Wallets), `EMAIL_FROM_ADDRESS` (see Gmail setup below)
+
+**Step 5 — Deploy**
+- Railway auto-deploys when you add variables or push to GitHub
+- Watch the **"Deployments"** tab — wait for it to turn green ✅
+
+**Step 6 — You're live!**
+- Go to **"Settings"** → **"Networking"** → **"Generate Domain"**
+- You get a URL like: `https://sos-wallets-production.up.railway.app`
+- **App:** `https://sos-wallets-production.up.railway.app/`
+- **Admin panel:** `https://sos-wallets-production.up.railway.app/admin`
+- Login with the `ADMIN_EMAIL` / `ADMIN_PASS` you set
+
+> 💡 **Railway vs Render:** Railway's free trial includes a persistent volume, so your database survives redeploys. Render's free tier has an ephemeral filesystem (DB resets on redeploy). Railway is the better choice for keeping user data.
+
+---
+
+### Deploy to Render.com (free alternative)
 
 1. Go to [Render.com](https://render.com) → sign up / sign in with **GitHub**.
 2. Click **New → Blueprint** → select your `wallets` repo.
