@@ -1,49 +1,25 @@
-# SOS WALLETS v2 — Fix & Enhance
+# SOS WALLETS — Unified Admin Dashboard Refactor
 
-## Phase 1 — Email Fix (COMPLETE)
-- [x] Diagnose "email not configured" root cause (EmailJS-only, Allowed Domains 403)
-- [x] Add Web3Forms as zero-setup fallback provider
-- [x] Build unified deliverEmail() dispatcher with auto-fallback
-- [x] Add delivery log UI + storage
-- [x] Update index.html Email Delivery card (multi-provider)
-- [x] Verify in live browser (all 3 provider states render)
+## Goal
+Make the admin dashboard the ONLY interface. No user signups, no user accounts, no separate front-end user flows. Everything (wallets, send/notify, address book, templates, email config, scheduler, transactions) lives inside the admin dashboard. Admin logs in once and controls everything.
 
-## Phase 2 — New Features (COMPLETE)
-- [x] ERC-20 token send: module in app.js (registry, ABI, keccak256, ethCall, sendERC20, helpers)
-- [x] Wire realSend() to route to sendERC20() when a token is selected
-- [x] Add token selector UI to index.html Real Send form
-- [x] Call renderSendTokenSelect() on network change + entering real mode
-- [x] Live portfolio value dashboard (aggregate balances × prices via CoinGecko)
-- [x] Recurring/automatic notification scheduler (hourly/daily/weekly, 4 body types, persists + catches up)
+## Backend Changes (server.js)
+- [x] Remove user registration route (keep login for admin only)
+- [x] Add admin-scoped data endpoints (data tied to admin)
+- [x] Add admin: change own password route
+- [x] Add admin: save/load all app data (wallets, addr book, templates, email config, scheduler, sim txs)
+- [x] Add admin: send notification email (single recipient)
+- [x] Add admin: test email
+- [x] Keep health check, admin stats, admin login
+- [x] Serve admin dashboard as the root route `/`
 
-## Phase 3 — Verify & Deliver (COMPLETE)
-- [x] node -c app.js syntax check (passes)
-- [x] Serve locally & smoke-test in browser (all features render, no console errors)
-- [x] Commit & push to GitHub (commit 9255db7 pushed to origin/main)
-- [x] Summarize all changes for user
+## Frontend Changes (admin.html)
+- [x] Build new unified admin dashboard with all wallet features embedded
+- [x] Tabs: Overview, Wallets, Send & Notify, Address Book, Templates, Email Config, Scheduler, Transactions, Settings
+- [x] Change password UI in Settings
+- [x] All data persists server-side via API
 
-## Phase 4 — Backend (COMPLETE)
-- [x] Create Node.js/Express + SQLite backend (server.js, package.json, .env)
-- [x] JWT auth + bcrypt password hashing
-- [x] Data sync, transaction log, email log, forgot/reset password endpoints
-- [x] Backend serves static frontend
-- [x] api-client.js frontend module
-- [x] Test all endpoints locally
-
-## Phase 5 — Admin System (COMPLETE)
-- [x] Add is_admin column + admin bootstrap to server.js
-- [x] Add adminAuth middleware + is_admin in JWT
-- [x] Add all admin API routes (stats, users, toggle-admin, transactions, email-log, broadcast)
-- [x] Test admin API endpoints (login, stats, users — all working)
-- [x] Create admin.html dashboard page
-- [x] Test admin.html in browser (login, stats, tabs, broadcast all work)
-- [x] Commit & push admin system to GitHub (commit 6e74ef2 pushed)
-- [x] Inform user of admin credentials
-
-## Phase 6 — Deployment to Render.com (COMPLETE)
-- [x] Create render.yaml blueprint (one-click deploy)
-- [x] Create Procfile (Railway/Heroku compat)
-- [x] Update server.js: PORT env, DB_PATH env, production URL display, ephemeral FS warning
-- [x] Update README with full deploy instructions + Gmail SMTP + API table
-- [x] Verify frontend auto-detects same-origin backend (works on Render)
-- [x] Commit & push (commit 2c8985a pushed)
+## Deploy
+- [x] Test locally (all endpoints verified: login, stats, data CRUD, tx log, email test, root route serves admin.html)
+- [ ] Push to GitHub
+- [ ] Redeploy on Railway (auto from git push)

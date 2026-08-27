@@ -1,19 +1,17 @@
 /* ============================================================
-   SOS WALLETS — Backend API Server
+   SOS WALLETS — Backend API Server (v2 — Admin-Only Mode)
    ------------------------------------------------------------
-   Provides:
-   1. User accounts (register / login / forgot-password) with
-      JWT auth + bcrypt password hashing — solves the "lost
-      login details" problem (accounts are on the server, not
-      tied to one browser's localStorage).
-   2. Data sync — wallet data, address book, notification
-      templates, email config, and transaction logs are stored
-      server-side per user so they survive browser resets and
-      sync across devices.
-   3. Email delivery via Nodemailer (SMTP) — no EmailJS template
-      syntax to get wrong, no Web3Forms setup. Just configure
-      SMTP credentials in .env and the server sends styled HTML
-      emails directly.
+   This project is for a single admin user. There are NO public
+   user signups. The admin logs in once and controls everything
+   from the admin dashboard:
+     - Simulated wallets & transactions
+     - Real blockchain send & notify
+     - Address book
+     - Notification templates
+     - Email delivery config (SMTP / EmailJS / Web3Forms)
+     - Recurring notification scheduler
+     - Change own password
+   All data persists server-side in SQLite, keyed to the admin.
    ============================================================ */
 
 require('dotenv').config();
@@ -33,14 +31,9 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
 /* ---------- Middleware ---------- */
 app.use(cors({ origin: CORS_ORIGIN === '*' ? true : CORS_ORIGIN.split(','), credentials: true }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '10mb' }));
 
-/* ---------- Database (SQLite — zero-config, file-based) ----------
-   On cloud platforms (Render, Railway, etc.) the filesystem may be
-   ephemeral on free tiers. Set DB_PATH env var to a persistent disk
-   mount path (e.g. /opt/data/data.db) if you attach a persistent disk.
-   Otherwise the DB resets on each redeploy. For production, consider
-   upgrading to a managed PostgreSQL (see README).                                   */
+/* ---------- Database (SQLite — zero-config, file-based) ---------- */
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data.db');
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
@@ -57,7 +50,8 @@ db.exec(`
     created_at INTEGER DEFAULT (strftime('%s','now'))
   );
 
-  CREATE TABLE IF NOT EXISTS user_data (
+  /* App data — key/value store scoped to admin (user_id=1) */
+  CREATE TABLE IF NOT EXISTS app_data (
     user_id INTEGER NOT NULL,
     key TEXT NOT NULL,
     value TEXT,
@@ -68,7 +62,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS tx_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
+    user_id INTEGER,
     tx_hash TEXT,
     to_addr TEXT,
     amount TEXT,
@@ -99,10 +93,8 @@ const ADMIN_PASS = process.env.ADMIN_PASS || 'admin123456';
   if(!existing){
     const hash = bcrypt.hashSync(ADMIN_PASS, 10);
     db.prepare('INSERT INTO users (name, email, password_hash, is_admin) VALUES (?, ?, ?, 1)').run('Admin', ADMIN_EMAIL, hash);
-    console.log(`  [Admin] Default admin created: ${ADMIN_EMAIL} / ${ADMIN_PASS}`);
-    console.log(`  [Admin] CHANGE THIS IMMEDIATELY via .env (ADMIN_EMAIL, ADMIN_PASS) or the admin panel!`);
+    console.log(`  [Admin] Default admin created: ${ADMIN_EMAIL}`);
   } else {
-    // Ensure existing admin has is_admin flag
     db.prepare('UPDATE users SET is_admin = 1 WHERE email = ?').run(ADMIN_EMAIL);
   }
 })();
@@ -114,23 +106,23 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'No token provided' });
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded; // { id, email, name }
+    req.user = decoded;
     next();
   } catch (e) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
 
-function signToken(user) {
-  return jwt.sign({ id: user.id, email: user.email, name: user.name, is_admin: user.is_admin || 0 }, JWT_SECRET, { expiresIn: '30d' });
-}
-
-/* Admin middleware — requires auth + is_admin flag */
+/* Admin-only middleware — this is the only access level */
 function adminAuth(req, res, next) {
   auth(req, res, () => {
     if (!req.user.is_admin) return res.status(403).json({ error: 'Admin access required' });
     next();
   });
+}
+
+function signToken(user) {
+  return jwt.sign({ id: user.id, email: user.email, name: user.name, is_admin: user.is_admin || 0 }, JWT_SECRET, { expiresIn: '30d' });
 }
 
 /* ---------- Email transporter (lazy init) ---------- */
@@ -149,7 +141,7 @@ function getTransporter() {
 
 function sendMail(to, subject, html, text) {
   const t = getTransporter();
-  if (!t) return Promise.resolve({ ok: false, reason: 'SMTP not configured on server' });
+  if (!t) return Promise.resolve({ ok: false, reason: 'SMTP not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS env vars, or use the Email Delivery tab to configure Web3Forms/EmailJS.' });
   const fromName = process.env.EMAIL_FROM_NAME || 'SOS WALLETS';
   const fromAddr = process.env.EMAIL_FROM_ADDRESS || process.env.SMTP_USER;
   return t.sendMail({
@@ -168,33 +160,14 @@ app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
     service: 'SOS WALLETS Backend',
-    version: '1.0.0',
+    version: '2.0.0',
+    mode: 'admin-only',
     emailConfigured: !!getTransporter(),
     timestamp: Date.now()
   });
 });
 
-/* ---------- Register ---------- */
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
-    if (!name || !email || !password) return res.status(400).json({ error: 'Missing fields (name, email, password required)' });
-    if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
-
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
-    if (existing) return res.status(409).json({ error: 'An account with this email already exists' });
-
-    const hash = bcrypt.hashSync(password, 10);
-    const info = db.prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)').run(name, email.toLowerCase(), hash);
-    const user = { id: info.lastInsertRowid, name, email: email.toLowerCase() };
-    const token = signToken(user);
-    res.json({ ok: true, token, user: { id: user.id, name: user.name, email: user.email } });
-  } catch (e) {
-    res.status(500).json({ error: 'Server error: ' + e.message });
-  }
-});
-
-/* ---------- Login ---------- */
+/* ---------- Admin Login (the ONLY login) ---------- */
 app.post('/api/auth/login', (req, res) => {
   try {
     const { email, password } = req.body;
@@ -203,96 +176,59 @@ app.post('/api/auth/login', (req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
     if (!user) return res.status(401).json({ error: 'Invalid email or password' });
     if (!bcrypt.compareSync(password, user.password_hash)) return res.status(401).json({ error: 'Invalid email or password' });
+    if (!user.is_admin) return res.status(403).json({ error: 'Admin access required' });
 
     const token = signToken(user);
-    res.json({ ok: true, token, user: { id: user.id, name: user.name, email: user.email, is_admin: user.is_admin || 0 } });
+    res.json({ ok: true, token, user: { id: user.id, name: user.name, email: user.email, is_admin: 1 } });
   } catch (e) {
     res.status(500).json({ error: 'Server error: ' + e.message });
   }
 });
 
-/* ---------- Forgot Password (generate reset token) ---------- */
-app.post('/api/auth/forgot', (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email required' });
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
-    // Always return ok (don't leak whether email exists)
-    if (!user) return res.json({ ok: true, message: 'If that email exists, a reset link has been sent.' });
-
-    const token = crypto.randomBytes(32).toString('hex');
-    const expires = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-    db.prepare('UPDATE users SET reset_token = ?, reset_expires = ? WHERE id = ?').run(token, expires, user.id);
-
-    // Try to email the reset link
-    const origin = req.headers.origin || req.headers.referer || '';
-    const resetUrl = origin ? origin + '#reset=' + token : 'Reset token: ' + token;
-    const html = `<div style="font-family:Arial,sans-serif;max-width:500px;margin:auto;padding:20px">
-      <h2 style="color:#4f7fff">SOS WALLETS — Password Reset</h2>
-      <p>Hi ${user.name},</p>
-      <p>You requested a password reset. Click the link below to set a new password:</p>
-      <p><a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background:#4f7fff;color:#fff;text-decoration:none;border-radius:6px">Reset Password</a></p>
-      <p style="font-size:13px;color:#999">This link expires in 1 hour. If you didn't request this, ignore this email.</p>
-      <hr><p style="font-size:12px;color:#999">SOS WALLETS</p></div>`;
-    sendMail(user.email, 'SOS WALLETS — Password Reset', html);
-    res.json({ ok: true, message: 'If that email exists, a reset link has been sent.', resetToken: getTransporter() ? undefined : token });
-  } catch (e) {
-    res.status(500).json({ error: 'Server error: ' + e.message });
-  }
-});
-
-/* ---------- Reset Password (with token) ---------- */
-app.post('/api/auth/reset', (req, res) => {
-  try {
-    const { token, email, newPassword } = req.body;
-    if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
-
-    let user;
-    if (token) {
-      user = db.prepare('SELECT * FROM users WHERE reset_token = ?').get(token);
-      if (!user) return res.status(400).json({ error: 'Invalid or expired reset token' });
-      if (user.reset_expires < Math.floor(Date.now() / 1000)) return res.status(400).json({ error: 'Reset token has expired' });
-    } else if (email) {
-      // Direct reset (if SMTP not configured, allow reset by email verification)
-      user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
-      if (!user) return res.status(400).json({ error: 'No account found with that email' });
-    } else {
-      return res.status(400).json({ error: 'Provide either a reset token or email' });
-    }
-
-    const hash = bcrypt.hashSync(newPassword, 10);
-    db.prepare('UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?').run(hash, user.id);
-    const newToken = signToken(user);
-    res.json({ ok: true, token: newToken, message: 'Password reset successfully. All your wallet data is preserved.' });
-  } catch (e) {
-    res.status(500).json({ error: 'Server error: ' + e.message });
-  }
-});
-
-/* ---------- Get current user ---------- */
+/* ---------- Get current admin ---------- */
 app.get('/api/auth/me', auth, (req, res) => {
   res.json({ ok: true, user: req.user });
 });
 
+/* ---------- Admin: Change own password ---------- */
+app.post('/api/admin/change-password', adminAuth, (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'currentPassword and newPassword required' });
+    if (newPassword.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    if (!bcrypt.compareSync(currentPassword, user.password_hash)) return res.status(401).json({ error: 'Current password is incorrect' });
+
+    const hash = bcrypt.hashSync(newPassword, 10);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+    res.json({ ok: true, message: 'Password changed successfully' });
+  } catch (e) {
+    res.status(500).json({ error: 'Server error: ' + e.message });
+  }
+});
+
 /* ============================================================
-   DATA SYNC (per-user key-value store)
-   Keys: wallet_data, address_book, notif_log, notif_template,
-         email_config, scheduler_jobs, settings
+   APP DATA — everything the admin manages, stored as key/value
+   Keys: sim_state, addr_book, notif_template, email_config,
+         scheduler_jobs, settings, token_prices, real_txs
    ============================================================ */
 
-app.get('/api/data/:key', auth, (req, res) => {
+/* Get a single data key */
+app.get('/api/data/:key', adminAuth, (req, res) => {
   try {
-    const row = db.prepare('SELECT value FROM user_data WHERE user_id = ? AND key = ?').get(req.user.id, req.params.key);
+    const row = db.prepare('SELECT value FROM app_data WHERE user_id = ? AND key = ?').get(req.user.id, req.params.key);
     res.json({ ok: true, value: row ? JSON.parse(row.value) : null });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.put('/api/data/:key', auth, (req, res) => {
+/* Save a single data key */
+app.put('/api/data/:key', adminAuth, (req, res) => {
   try {
     const value = JSON.stringify(req.body.value);
-    db.prepare(`INSERT INTO user_data (user_id, key, value, updated_at) VALUES (?, ?, ?, strftime('%s','now'))
+    db.prepare(`INSERT INTO app_data (user_id, key, value, updated_at) VALUES (?, ?, ?, strftime('%s','now'))
                 ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
       .run(req.user.id, req.params.key, value);
     res.json({ ok: true });
@@ -301,10 +237,10 @@ app.put('/api/data/:key', auth, (req, res) => {
   }
 });
 
-/* Bulk sync — get all user data at once (called on login) */
-app.get('/api/data', auth, (req, res) => {
+/* Get ALL app data at once (called on dashboard load) */
+app.get('/api/data', adminAuth, (req, res) => {
   try {
-    const rows = db.prepare('SELECT key, value FROM user_data WHERE user_id = ?').all(req.user.id);
+    const rows = db.prepare('SELECT key, value FROM app_data WHERE user_id = ?').all(req.user.id);
     const data = {};
     rows.forEach(r => { try { data[r.key] = JSON.parse(r.value); } catch(e) {} });
     res.json({ ok: true, data });
@@ -313,11 +249,11 @@ app.get('/api/data', auth, (req, res) => {
   }
 });
 
-/* Bulk save — update multiple keys at once (called on logout/periodic) */
-app.post('/api/data/bulk', auth, (req, res) => {
+/* Save multiple data keys at once (bulk) */
+app.post('/api/data/bulk', adminAuth, (req, res) => {
   try {
     const items = req.body.data || {};
-    const stmt = db.prepare(`INSERT INTO user_data (user_id, key, value, updated_at) VALUES (?, ?, ?, strftime('%s','now'))
+    const stmt = db.prepare(`INSERT INTO app_data (user_id, key, value, updated_at) VALUES (?, ?, ?, strftime('%s','now'))
                              ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);
     const tx = db.transaction(() => {
       for (const [key, value] of Object.entries(items)) {
@@ -334,7 +270,7 @@ app.post('/api/data/bulk', auth, (req, res) => {
 /* ============================================================
    TRANSACTION LOG
    ============================================================ */
-app.post('/api/tx', auth, (req, res) => {
+app.post('/api/tx', adminAuth, (req, res) => {
   try {
     const { txHash, toAddr, amount, symbol, network, status, memo } = req.body;
     const info = db.prepare('INSERT INTO tx_log (user_id, tx_hash, to_addr, amount, symbol, network, status, memo) VALUES (?,?,?,?,?,?,?,?)')
@@ -345,19 +281,30 @@ app.post('/api/tx', auth, (req, res) => {
   }
 });
 
-app.get('/api/tx', auth, (req, res) => {
+app.get('/api/tx', adminAuth, (req, res) => {
   try {
-    const rows = db.prepare('SELECT * FROM tx_log WHERE user_id = ? ORDER BY ts DESC LIMIT 200').all(req.user.id);
+    const rows = db.prepare('SELECT * FROM tx_log WHERE user_id = ? ORDER BY ts DESC LIMIT 500').all(req.user.id);
     res.json({ ok: true, logs: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
+app.delete('/api/tx', adminAuth, (req, res) => {
+  try {
+    db.prepare('DELETE FROM tx_log WHERE user_id = ?').run(req.user.id);
+    res.json({ ok: true, message: 'All transactions cleared' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /* ============================================================
-   EMAIL DELIVERY (server-side via Nodemailer)
+   EMAIL DELIVERY
    ============================================================ */
-app.post('/api/email/send', auth, async (req, res) => {
+
+/* Send a single email (notification or test) */
+app.post('/api/email/send', adminAuth, async (req, res) => {
   try {
     const { to, subject, text, html } = req.body;
     if (!to || !subject) return res.status(400).json({ error: 'to and subject required' });
@@ -371,8 +318,8 @@ app.post('/api/email/send', auth, async (req, res) => {
   }
 });
 
-/* Test email endpoint */
-app.post('/api/email/test', auth, async (req, res) => {
+/* Test email */
+app.post('/api/email/test', adminAuth, async (req, res) => {
   try {
     const { to } = req.body;
     if (!to) return res.status(400).json({ error: 'to (recipient email) required' });
@@ -380,6 +327,8 @@ app.post('/api/email/test', auth, async (req, res) => {
       <div style="background:linear-gradient(135deg,#0070f3,#00d4ff);padding:24px 28px"><h2 style="margin:0;color:#fff">SOS WALLETS</h2><p style="margin:4px 0 0;color:rgba(255,255,255,0.85)">Test Email — Delivery Working!</p></div>
       <div style="padding:28px"><p style="font-size:16px;line-height:1.6">Your backend email delivery is working. Real transaction notifications will now be sent automatically via the server.</p></div></div>`;
     const result = await sendMail(to, 'SOS WALLETS — Test Email (backend delivery working!)', html);
+    db.prepare('INSERT INTO email_log (user_id, to_addr, subject, status, detail) VALUES (?,?,?,?,?)')
+      .run(req.user.id, to, 'SOS WALLETS — Test Email', result.ok ? 'success' : 'failed', result.ok ? 'Test sent via SMTP' : (result.reason||''));
     if (result.ok) res.json({ ok: true, messageId: result.messageId });
     else res.status(502).json({ ok: false, error: result.reason });
   } catch (e) {
@@ -388,152 +337,88 @@ app.post('/api/email/test', auth, async (req, res) => {
 });
 
 /* Email log */
-app.get('/api/email/log', auth, (req, res) => {
+app.get('/api/email/log', adminAuth, (req, res) => {
   try {
-    const rows = db.prepare('SELECT * FROM email_log WHERE user_id = ? ORDER BY ts DESC LIMIT 100').all(req.user.id);
+    const rows = db.prepare('SELECT * FROM email_log WHERE user_id = ? ORDER BY ts DESC LIMIT 200').all(req.user.id);
     res.json({ ok: true, logs: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-/* ============================================================
-   ADMIN ROUTES — requires admin token
-   ============================================================ */
+app.delete('/api/email/log', adminAuth, (req, res) => {
+  try {
+    db.prepare('DELETE FROM email_log WHERE user_id = ?').run(req.user.id);
+    res.json({ ok: true, message: 'Email log cleared' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-/* Admin dashboard stats */
+/* ============================================================
+   ADMIN STATS
+   ============================================================ */
 app.get('/api/admin/stats', adminAuth, (req, res) => {
   try {
-    const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
-    const adminCount = db.prepare('SELECT COUNT(*) as c FROM users WHERE is_admin = 1').get().c;
-    const txCount = db.prepare('SELECT COUNT(*) as c FROM tx_log').get().c;
-    const emailCount = db.prepare('SELECT COUNT(*) as c FROM email_log').get().c;
-    const emailSent = db.prepare("SELECT COUNT(*) as c FROM email_log WHERE status = 'success'").get().c;
-    const emailFailed = db.prepare("SELECT COUNT(*) as c FROM email_log WHERE status = 'failed'").get().c;
-    const recentUsers = db.prepare('SELECT id, name, email, is_admin, created_at FROM users ORDER BY created_at DESC LIMIT 5').all();
-    res.json({ ok: true, stats: { userCount, adminCount, txCount, emailCount, emailSent, emailFailed, recentUsers } });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+    const txCount = db.prepare('SELECT COUNT(*) as c FROM tx_log WHERE user_id = ?').get(req.user.id).c;
+    const emailCount = db.prepare('SELECT COUNT(*) as c FROM email_log WHERE user_id = ?').get(req.user.id).c;
+    const emailSent = db.prepare("SELECT COUNT(*) as c FROM email_log WHERE user_id = ? AND status = 'success'").get(req.user.id).c;
+    const emailFailed = db.prepare("SELECT COUNT(*) as c FROM email_log WHERE user_id = ? AND status = 'failed'").get(req.user.id).c;
+    const dataKeys = db.prepare('SELECT COUNT(*) as c FROM app_data WHERE user_id = ?').get(req.user.id).c;
 
-/* List all users */
-app.get('/api/admin/users', adminAuth, (req, res) => {
-  try {
-    const users = db.prepare('SELECT id, name, email, is_admin, created_at FROM users ORDER BY created_at DESC').all();
-    res.json({ ok: true, users });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/* Delete a user (and cascade their data) */
-app.delete('/api/admin/users/:id', adminAuth, (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    if (id === req.user.id) return res.status(400).json({ error: 'Cannot delete your own admin account' });
-    const target = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    if (!target) return res.status(404).json({ error: 'User not found' });
-    db.prepare('DELETE FROM user_data WHERE user_id = ?').run(id);
-    db.prepare('DELETE FROM tx_log WHERE user_id = ?').run(id);
-    db.prepare('DELETE FROM users WHERE id = ?').run(id);
-    res.json({ ok: true, message: 'User deleted: ' + target.email });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/* Promote/demote admin */
-app.post('/api/admin/users/:id/toggle-admin', adminAuth, (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    const newVal = user.is_admin ? 0 : 1;
-    db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(newVal, id);
-    res.json({ ok: true, is_admin: newVal, message: newVal ? 'Promoted to admin' : 'Demoted from admin' });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/* View all transactions (all users) */
-app.get('/api/admin/transactions', adminAuth, (req, res) => {
-  try {
-    const rows = db.prepare(`
-      SELECT t.*, u.email as user_email, u.name as user_name
-      FROM tx_log t LEFT JOIN users u ON t.user_id = u.id
-      ORDER BY t.ts DESC LIMIT 500
-    `).all();
-    res.json({ ok: true, transactions: rows });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/* View all email logs (all users) */
-app.get('/api/admin/email-log', adminAuth, (req, res) => {
-  try {
-    const rows = db.prepare(`
-      SELECT e.*, u.email as user_email
-      FROM email_log e LEFT JOIN users u ON e.user_id = u.id
-      ORDER BY e.ts DESC LIMIT 500
-    `).all();
-    res.json({ ok: true, logs: rows });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/* Broadcast email to all users */
-app.post('/api/admin/broadcast', adminAuth, async (req, res) => {
-  try {
-    const { subject, html, text } = req.body;
-    if (!subject || !html) return res.status(400).json({ error: 'subject and html required' });
-    const users = db.prepare('SELECT email FROM users').all();
-    let sent = 0, failed = 0;
-    for (const u of users) {
-      const result = await sendMail(u.email, subject, html, text);
-      db.prepare('INSERT INTO email_log (user_id, to_addr, subject, status, detail) VALUES (?,?,?,?,?)')
-        .run(req.user.id, u.email, subject, result.ok ? 'success' : 'failed', result.ok ? 'Broadcast sent' : (result.reason||''));
-      if (result.ok) sent++; else failed++;
+    // Get app data counts for richer stats
+    const simRow = db.prepare("SELECT value FROM app_data WHERE user_id = ? AND key = 'sim_state'").get(req.user.id);
+    let walletCount = 0, simTxCount = 0;
+    if (simRow) {
+      try {
+        const sim = JSON.parse(simRow.value);
+        walletCount = sim.wallets ? sim.wallets.length : 0;
+        simTxCount = sim.txs ? sim.txs.length : 0;
+      } catch(e) {}
     }
-    res.json({ ok: true, sent, failed, total: users.length });
+    const addrRow = db.prepare("SELECT value FROM app_data WHERE user_id = ? AND key = 'addr_book'").get(req.user.id);
+    let addrCount = 0;
+    if (addrRow) { try { addrCount = JSON.parse(addrRow.value).length; } catch(e) {} }
+    const schedRow = db.prepare("SELECT value FROM app_data WHERE user_id = ? AND key = 'scheduler_jobs'").get(req.user.id);
+    let schedCount = 0, schedActive = 0;
+    if (schedRow) {
+      try {
+        const jobs = JSON.parse(schedRow.value);
+        schedCount = jobs.length;
+        schedActive = jobs.filter(j => j.enabled).length;
+      } catch(e) {}
+    }
+
+    res.json({ ok: true, stats: {
+      txCount, emailCount, emailSent, emailFailed, dataKeys,
+      walletCount, simTxCount, addrCount, schedCount, schedActive,
+      emailConfigured: !!getTransporter()
+    }});
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
-
-/* Admin: serve the admin dashboard page */
-app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
 /* ============================================================
-   SERVE FRONTEND (optional — if backend hosts the frontend too)
+   SERVE ADMIN DASHBOARD (the ONLY interface — served at root)
    ============================================================ */
-const frontendDir = path.join(__dirname, '..');
-app.use(express.static(frontendDir));
-app.get('/', (req, res) => res.sendFile(path.join(frontendDir, 'index.html')));
+
+/* Serve the admin dashboard at / and /admin */
+app.get(['/admin', '/'], (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
 
 /* ---------- Start server ---------- */
 const PUBLIC_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  ============================================`);
-  console.log(`  SOS WALLETS Backend is LIVE`);
+  console.log(`  SOS WALLETS Backend v2 (Admin-Only Mode)`);
   console.log(`  ============================================`);
   console.log(`  URL:          ${PUBLIC_URL}`);
-  console.log(`  Admin panel:  ${PUBLIC_URL}/admin`);
-  console.log(`  Frontend:     ${PUBLIC_URL}/`);
-  console.log(`  Frontend dir: ${frontendDir}`);
+  console.log(`  Dashboard:    ${PUBLIC_URL}/`);
+  console.log(`  Admin login:  ${ADMIN_EMAIL}`);
   console.log(`  Database:     ${DB_PATH}`);
   console.log(`  Email (SMTP): ${getTransporter() ? 'configured ('+process.env.SMTP_USER+')' : 'NOT configured (set SMTP_* env vars)'}`);
-  console.log(`  CORS origin:  ${CORS_ORIGIN}`);
   console.log(`  Health check: ${PUBLIC_URL}/api/health`);
-  if (!process.env.DB_PATH && process.env.RENDER_EXTERNAL_URL) {
-    console.log(`  ⚠️  WARNING: Free-tier ephemeral filesystem — DB resets on redeploy.`);
-    console.log(`     To keep data: add a persistent disk + set DB_PATH env var.`);
-    console.log(`     Or upgrade to managed PostgreSQL (see README).`);
-  }
   console.log(`  ============================================\n`);
 });
