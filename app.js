@@ -56,6 +56,8 @@ const K = {
   prices: 'nw_prices',
   tmpl:   'nw_tmpl_',
   emailjs:'nw_emailjs_',
+  dlog:   'nw_dlog_',
+  sched:  'nw_sched_',
 };
 
 /* ---------- Persistence ---------- */
@@ -155,6 +157,7 @@ function doLogin(){
 }
 
 function logout(){
+  stopSchedJobs();
   currentUser=null;
   localStorage.removeItem(K.session);
   document.getElementById('main-app').classList.add('hidden');
@@ -192,6 +195,7 @@ function enterApp(){
   initSim();
   renderAll();
   initTemplateComposer();
+  resumeSchedJobs();
 }
 
 function checkSession(){
@@ -231,12 +235,12 @@ function switchMode(mode){
     document.getElementById('tab-'+m).classList.toggle('active',m===mode);
     document.getElementById(m+'-section').classList.toggle('hidden',m!==mode);
   });
-  if(mode==='real') renderNetworks();
+  if(mode==='real'){ renderNetworks(); renderSendTokenSelect(); loadLivePortfolio(); }
   if(mode==='more') renderAddrBook();
 }
 
 function switchSub(s){
-  ['addr','notif','template','settings','email'].forEach(x=>{
+  ['addr','notif','template','settings','email','sched'].forEach(x=>{
     document.getElementById('st-'+x).classList.toggle('active',x===s);
     const sub=document.getElementById('sub-'+x);
     if(sub) sub.classList.toggle('hidden',x!==s);
@@ -244,6 +248,7 @@ function switchSub(s){
   if(s==='notif') renderNotifLog();
   if(s==='template') initTemplateComposer();
   if(s==='email') loadEmailJSConfig();
+  if(s==='sched') renderSchedJobs();
 }
 
 /* ============================================================
@@ -759,6 +764,7 @@ async function doConnect(provider, label){
     // Persist connected wallet id so we can show it
     realState.walletLabel=label||'Wallet';
     await refreshBalance();
+    loadLivePortfolio();
     if(provider.on){
       try{
         provider.on('accountsChanged',(a)=>{if(!a||!a.length)disconnectWallet();else{realState.address=a[0];updateConnUI();refreshBalance();}});
@@ -802,6 +808,7 @@ function updateConnUI(){
 async function refreshBalance(){
   if(!realState.connected||!realState.web3||!realState.address)return;
   try{const b=await realState.web3.eth.getBalance(realState.address);realState.balance=realState.web3.utils.fromWei(b,'ether');document.getElementById('conn-balance').textContent=fmtAmt(realState.balance);}catch(e){toast('error','Balance Error',e.message);}
+  loadLivePortfolio();
 }
 function renderNetworks(){
   const g=document.getElementById('network-grid'); g.innerHTML='';
@@ -816,7 +823,384 @@ async function selectNetwork(id){
     try{await prov.request({method:'wallet_switchEthereumChain',params:[{chainId:net.chainId}]});toast('info','Network Switched',net.name);}
     catch(e){if(e.code===4902){try{await prov.request({method:'wallet_addEthereumChain',params:[{chainId:net.chainId,chainName:net.name,nativeCurrency:{name:net.symbol,symbol:net.symbol,decimals:18},rpcUrls:[net.rpc]}]});}catch(e2){toast('error','Add Network Failed',e2.message);}}else{toast('warning','Switch Network','Switch manually in your wallet.');}}
   }
+  renderSendTokenSelect();
 }
+/* ============================================================
+   FEATURE: ERC-20 / TOKEN SEND SUPPORT
+   Send popular tokens (USDT, USDC, WETH, LINK, DAI…) not just native.
+   Uses the standard ERC-20 ABI (balanceOf / transfer / decimals).
+   ============================================================ */
+
+/* Curated, well-known token contract addresses per network.
+   Addresses are the same across many EVM chains (USDT/USDC bridged). */
+const ERC20_TOKENS = {
+  ethereum: [
+    {symbol:'USDT', name:'Tether USD',      address:'0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals:6},
+    {symbol:'USDC', name:'USD Coin',        address:'0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals:6},
+    {symbol:'DAI',  name:'Dai Stablecoin',  address:'0x6B175474E89094C44Da98b954EedeAC495271d0F', decimals:18},
+    {symbol:'LINK', name:'Chainlink',       address:'0x514910771AF9Ca656af840dff83E8264EcF986CA', decimals:18},
+    {symbol:'WBTC', name:'Wrapped BTC',     address:'0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', decimals:8},
+    {symbol:'UNI',  name:'Uniswap',         address:'0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984', decimals:18},
+  ],
+  sepolia: [
+    {symbol:'USDC', name:'USD Coin (test)', address:'0x94a9D9AC8a22534E90Fa1d22F4437cFc4E2f4E80', decimals:6},
+  ],
+  polygon: [
+    {symbol:'USDT', name:'Tether USD (PoS)',address:'0xc2132D05D31c914a87C6611C10748AEb04B8e2F5', decimals:6},
+    {symbol:'USDC', name:'USD Coin (PoS)',  address:'0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', decimals:6},
+    {symbol:'DAI',  name:'Dai (PoS)',       address:'0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063', decimals:18},
+    {symbol:'WMATIC',name:'Wrapped Matic',  address:'0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270', decimals:18},
+  ],
+  bsc: [
+    {symbol:'USDT', name:'Tether USD',      address:'0x55d398326f99059fF775485246999027B3197955', decimals:18},
+    {symbol:'USDC', name:'USD Coin',        address:'0x8AC76A51cc950d9822D68b83fE1Ad97B32Cd580d', decimals:18},
+    {symbol:'BUSD', name:'Binance USD',     address:'0xe9e7CEA3DedcA5984780Bafc599bD69ACd087D56', decimals:18},
+    {symbol:'CAKE', name:'PancakeSwap',     address:'0x0E09FaBB73Bd3A0fbA02281d2c1A6DdD65bA6E80', decimals:18},
+  ],
+  arbitrum: [
+    {symbol:'USDT', name:'Tether USD',      address:'0xFd086bC7CD5c481DCC9C85ebE478A1C0b69FCbb9', decimals:6},
+    {symbol:'USDC', name:'USD Coin',        address:'0xaf88d065e77c8cC2239327C5EDb3A432268e5831', decimals:6},
+    {symbol:'ARB',  name:'Arbitrum',        address:'0x912CE59144191C1204E64559FE8253a0e49E6548', decimals:18},
+  ],
+  optimism: [
+    {symbol:'USDT', name:'Tether USD',      address:'0x94b008aA00579c1307B0EF2c499aD44aADcE3E92', decimals:6},
+    {symbol:'USDC', name:'USD Coin',        address:'0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', decimals:6},
+    {symbol:'OP',   name:'Optimism',        address:'0x4200000000000000000000000000000000000042', decimals:18},
+  ],
+  base: [
+    {symbol:'USDC', name:'USD Coin',        address:'0x833589fCD6eDb6E08f4c7C32D4f71b54bdA-D29f'.replace('-D29f','b755'), decimals:6},
+    {symbol:'DAI',  name:'Dai Stablecoin',  address:'0x50c5725949A6F0c72E6C4a641F24049A917DB0CB', decimals:18},
+  ],
+  avalanche: [
+    {symbol:'USDT', name:'Tether USD',      address:'0x9702230A8Ea53601f5cD2dc00fDBc7d4b24d3e88', decimals:6},
+    {symbol:'USDC', name:'USD Coin',        address:'0xB97EF9Ef8734C71904D8002F14b6300f40d83340', decimals:6},
+    {symbol:'DAI',  name:'Dai Stablecoin',  address:'0xd586E7F844cEa2F87f5015261BC0C41dAf478211', decimals:18},
+  ],
+};
+
+/* Minimal ERC-20 ABI (only what we need) */
+const ERC20_ABI = [
+  {"constant":true,"inputs":[{"name":"","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"},
+  {"constant":false,"inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"type":"function"},
+  {"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"},
+  {"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"type":"function"},
+  {"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"type":"function"},
+];
+
+/* Returns the currently selected token object (or null = native). */
+function getSelectedSendToken(){
+  const sel=document.getElementById('send-token-select');
+  if(!sel) return null;
+  const v=sel.value;
+  if(!v || v==='native') return null;
+  // value is "address::decimals::symbol"
+  const parts=v.split('::');
+  if(parts.length<3) return null;
+  return {address:parts[0], decimals:parseInt(parts[1],10)||18, symbol:parts[2], name:parts[3]||parts[2]};
+}
+
+/* Build the token selector dropdown for the currently selected network. */
+function renderSendTokenSelect(){
+  const sel=document.getElementById('send-token-select');
+  if(!sel) return;
+  const netId=realState.selectedNetworkId;
+  const net=NETWORKS.find(n=>n.id===netId);
+  const tokens=ERC20_TOKENS[netId]||[];
+  let opts=`<option value="native">${net?net.symbol:'ETH'} — native token</option>`;
+  tokens.forEach(t=>{
+    opts+=`<option value="${t.address}::${t.decimals}::${t.symbol}::${t.name}">${t.symbol} — ${t.name}</option>`;
+  });
+  opts+=`<option value="custom">+ Custom token address…</option>`;
+  sel.innerHTML=opts;
+  // custom address field
+  const customWrap=document.getElementById('custom-token-wrap');
+  if(customWrap) customWrap.classList.add('hidden');
+  // update amount label
+  updateAmountLabel();
+  // refresh token balance preview
+  renderTokenBalancePreview();
+}
+
+/* When "Custom" is chosen, show a field to paste a contract address + auto-detect decimals. */
+async function onSendTokenChange(){
+  const sel=document.getElementById('send-token-select');
+  const customWrap=document.getElementById('custom-token-wrap');
+  if(sel && sel.value==='custom' && customWrap){
+    customWrap.classList.remove('hidden');
+    updateAmountLabel('custom token');
+    return;
+  }
+  if(customWrap) customWrap.classList.add('hidden');
+  updateAmountLabel();
+  renderTokenBalancePreview();
+}
+
+/* Auto-detect a custom token's symbol + decimals from chain, then add it as a temporary option. */
+async function detectCustomToken(){
+  const inp=document.getElementById('custom-token-address');
+  if(!inp) return;
+  const addr=inp.value.trim();
+  if(!addr || !addr.startsWith('0x') || addr.length!==42){ toast('error','Invalid Address','Enter a valid 0x… token contract address (42 chars).'); return; }
+  const prov=getProvider();
+  if(!prov){ toast('error','No Provider','Connect your wallet first.'); return; }
+  const toastEl=toast('info','Detecting…','Reading token info from chain.');
+  try{
+    const sym=await ethCall(prov, addr, encodeCall('symbol()'));
+    const dec=await ethCall(prov, addr, encodeCall('decimals()'));
+    const symbolHex=sym?sym.substring(2):'';
+    let symbol='TOKEN';
+    // decode string: skip 32-byte offset + 32-byte length, then read ASCII
+    try{ const len=parseInt(symbolHex.substring(64,128),16)||0; const s=hexToAscii(symbolHex.substring(128,128+len*2)); if(s) symbol=s; }catch(e){}
+    const decimals=dec?parseInt(dec.substring(2),16):18;
+    // inject as a selectable option and select it
+    const sel=document.getElementById('send-token-select');
+    if(sel){
+      const opt=document.createElement('option');
+      opt.value=addr+'::'+decimals+'::'+symbol+'::'+symbol+' (custom)';
+      opt.textContent=symbol+' — '+symbol+' (custom)';
+      sel.insertBefore(opt, sel.querySelector('option[value="custom"]'));
+      sel.value=opt.value;
+    }
+    const customWrap=document.getElementById('custom-token-wrap');
+    if(customWrap) customWrap.classList.add('hidden');
+    updateAmountLabel(symbol);
+    toast('success','Token Found', symbol+' ('+decimals+' decimals). You can now send it.');
+    renderTokenBalancePreview();
+  }catch(e){
+    toast('error','Detection Failed', 'Could not read token info. Check the address & network. '+e.message);
+  }
+}
+
+function updateAmountLabel(tokenSymbol){
+  const lbl=document.getElementById('real-amount-label');
+  if(!lbl) return;
+  const net=NETWORKS.find(n=>n.id===realState.selectedNetworkId);
+  if(tokenSymbol===undefined){
+    const tk=getSelectedSendToken();
+    tokenSymbol = tk ? tk.symbol : (net?net.symbol:'native');
+  }
+  lbl.textContent='Amount ('+tokenSymbol+')';
+}
+
+/* Show the user's balance of the selected token (or native) under the amount field. */
+async function renderTokenBalancePreview(){
+  const box=document.getElementById('token-balance-preview');
+  if(!box || !realState.connected){ if(box) box.innerHTML=''; return; }
+  const tk=getSelectedSendToken();
+  const net=NETWORKS.find(n=>n.id===realState.selectedNetworkId);
+  if(!tk){
+    // native
+    box.innerHTML = realState.balance!=null ? `<span style="color:var(--text-muted);font-size:0.76rem">Balance: ${fmtAmt(realState.balance)} ${net?net.symbol:''}</span>` : '';
+    return;
+  }
+  box.innerHTML='<span class="spinner" style="width:12px;height:12px;"></span> <span style="color:var(--text-muted);font-size:0.76rem">Loading '+tk.symbol+' balance…</span>';
+  try{
+    const bal=await getTokenBalance(tk.address, realState.address, tk.decimals);
+    box.innerHTML=`<span style="color:var(--text-muted);font-size:0.76rem">Balance: ${fmtAmt(bal)} ${tk.symbol}</span>`;
+  }catch(e){
+    box.innerHTML=`<span style="color:var(--text-muted);font-size:0.76rem">${tk.symbol} balance unavailable</span>`;
+  }
+}
+
+/* Read an ERC-20 balance via raw eth_call (no external web3 needed). */
+async function getTokenBalance(tokenAddr, walletAddr, decimals){
+  const prov=getProvider(); if(!prov) throw new Error('no provider');
+  const data=encodeCall('balanceOf(address)', walletAddr);
+  const res=await ethCall(prov, tokenAddr, data);
+  const balWei=res?BigInt(res):0n;
+  return Number(balWei)/Number(10n**BigInt(decimals||18));
+}
+
+
+/* ============================================================
+   FEATURE: LIVE PORTFOLIO DASHBOARD
+   Aggregates native + ERC-20 balances for the connected wallet
+   on the selected network, fetches live USD prices, and renders
+   a portfolio table with total value.
+   ============================================================ */
+/* Fetch live USD prices for a list of token symbols via CoinGecko's
+   free simple/price endpoint (no API key needed, CORS-enabled). */
+async function fetchLivePrices(ids){
+  if(!ids || !ids.length) return {};
+  const url='https://api.coingecko.com/api/v3/simple/price?ids='+ids.join(',')+'&vs_currencies=usd';
+  try{
+    const r=await fetch(url,{headers:{'accept':'application/json'}});
+    if(!r.ok) return {};
+    const j=await r.json();
+    const out={};
+    Object.keys(j).forEach(k=>{ out[k]=j[k].usd; });
+    return out;
+  }catch(e){ return {}; }
+}
+
+/* Map our network+symbol combos to CoinGecko coin IDs for price lookup. */
+const COINGECKO_ID_MAP={
+  'ethereum:ETH':'ethereum','ethereum:WETH':'weth','ethereum:USDT':'tether','ethereum:USDC':'usd-coin',
+  'ethereum:DAI':'dai','ethereum:LINK':'chainlink','ethereum:UNI':'uniswap','ethereum:WBTC':'wrapped-bitcoin',
+  'polygon:ETH':'ethereum','polygon:MATIC':'matic-token','polygon:USDT':'tether','polygon:USDC':'usd-coin','polygon:DAI':'dai',
+  'bsc:BNB':'binancecoin','bsc:USDT':'tether','bsc:USDC':'usd-coin','bsc:DAI':'dai',
+  'arbitrum:ETH':'ethereum','arbitrum:USDT':'tether','arbitrum:USDC':'usd-coin',
+  'optimism:ETH':'ethereum','optimism:USDT':'tether','optimism:USDC':'usd-coin',
+  'base:ETH':'ethereum','base:USDC':'usd-coin',
+  'avalanche:AVAX':'avalanche-2','avalanche:USDT':'tether','avalanche:USDC':'usd-coin','avalanche:DAI':'dai',
+  'fantom:FTM':'fantom','fantom:USDT':'tether','fantom:DAI':'dai',
+  'cronos:CRO':'crypto-com-chain','cronos:USDT':'tether','cronos:USDC':'usd-coin',
+  'sepolia:ETH':'ethereum',
+};
+
+/* Load and render the live portfolio for the connected wallet. */
+async function loadLivePortfolio(){
+  const box=document.getElementById('live-portfolio-box');
+  if(!box) return;
+  if(!realState.connected){
+    box.innerHTML='<p style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:14px 0;">Connect your wallet to see live token balances &amp; USD portfolio value across the selected network.</p>';
+    return;
+  }
+  const net=NETWORKS.find(n=>n.id===realState.selectedNetworkId);
+  if(!net){ box.innerHTML='<p style="color:var(--text-muted);font-size:0.82rem;">No network selected.</p>'; return; }
+  const btn=document.getElementById('portfolio-refresh-btn');
+  if(btn){ btn.disabled=true; btn.innerHTML='<span class="spinner" style="width:12px;height:12px;"></span>'; }
+  box.innerHTML='<div style="text-align:center;padding:18px 0;"><span class="spinner"></span><p style="color:var(--text-muted);font-size:0.82rem;margin-top:8px;">Loading balances &amp; live prices on '+net.name+'…</p></div>';
+  try{
+    const prov=getProvider();
+    if(!prov) throw new Error('No provider');
+    const addr=realState.address;
+    const rows=[];
+    // 1. Native balance
+    let nativeBal=0;
+    try{
+      const hexBal=await prov.request({method:'eth_getBalance',params:[addr,'latest']});
+      nativeBal=Number(BigInt(hexBal))/1e18;
+    }catch(e){}
+    rows.push({symbol:net.symbol, name:net.name+' native', balance:nativeBal, coingeckoKey:net.id+':'+net.symbol});
+    // 2. ERC-20 token balances
+    const tokens=ERC20_TOKENS[net.id]||[];
+    for(const t of tokens){
+      try{
+        const bal=await getTokenBalance(t.address, addr, t.decimals);
+        if(bal>0 || true){ rows.push({symbol:t.symbol, name:t.name, balance:bal, coingeckoKey:net.id+':'+t.symbol}); }
+      }catch(e){ /* skip unreadable token */ }
+    }
+    // 3. Fetch prices
+    const cgIds=[...new Set(rows.map(r=>COINGECKO_ID_MAP[r.coingeckoKey]).filter(Boolean))];
+    const prices=await fetchLivePrices(cgIds);
+    // 4. Compute USD values
+    let total=0;
+    rows.forEach(r=>{
+      const cgId=COINGECKO_ID_MAP[r.coingeckoKey];
+      r.price=cgId?(prices[cgId]||0):0;
+      r.usd=r.balance*r.price;
+      total+=r.usd;
+    });
+    rows.sort((a,b)=>b.usd-a.usd);
+    // 5. Render
+    let html='<div style="margin-bottom:12px;padding:12px 14px;background:var(--bg-secondary,#0f1320);border-radius:10px;border:1px solid rgba(255,255,255,0.06);">';
+    html+='<div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Total Portfolio Value</div>';
+    html+='<div style="font-size:1.6rem;font-weight:700;color:var(--accent-green);margin-top:2px;">$'+total.toLocaleString('en-US',{maximumFractionDigits:2})+'</div>';
+    html+='<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">'+net.name+' · '+shortAddr(addr)+'</div>';
+    html+='</div>';
+    html+='<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.82rem;">';
+    html+='<thead><tr style="text-align:left;color:var(--text-muted);border-bottom:1px solid rgba(255,255,255,0.08);"><th style="padding:6px 8px;">Asset</th><th style="padding:6px 8px;text-align:right;">Balance</th><th style="padding:6px 8px;text-align:right;">Price</th><th style="padding:6px 8px;text-align:right;">Value</th></tr></thead><tbody>';
+    rows.forEach(r=>{
+      html+='<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">';
+      html+='<td style="padding:7px 8px;font-weight:600;">'+escHtml(r.symbol)+'</td>';
+      html+='<td style="padding:7px 8px;text-align:right;font-variant-numeric:tabular-nums;">'+fmtAmt(r.balance)+'</td>';
+      html+='<td style="padding:7px 8px;text-align:right;color:var(--text-muted);">'+(r.price?'$'+r.price.toLocaleString('en-US',{maximumFractionDigits:4}):'—')+'</td>';
+      html+='<td style="padding:7px 8px;text-align:right;font-weight:600;color:'+(r.usd>0?'var(--accent-green)':'var(--text-muted)')+';">$'+r.usd.toLocaleString('en-US',{maximumFractionDigits:2})+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    html+='<p style="font-size:0.68rem;color:var(--text-muted);margin-top:8px;line-height:1.4;">Balances read on-chain via eth_call. Prices from CoinGecko (free API). Token list is curated per network — use the Custom Token detector in the Send form for any ERC-20 not listed.</p>';
+    box.innerHTML=html;
+  }catch(e){
+    box.innerHTML='<p style="color:var(--text-muted);font-size:0.82rem;padding:10px 0;">Could not load portfolio: '+escHtml(e.message||'unknown error')+'. Make sure your wallet is connected and the network RPC is reachable.</p>';
+  }finally{
+    if(btn){ btn.disabled=false; btn.innerHTML='🔄 Refresh'; }
+  }
+}
+
+/* ---- low-level eth_call + ABI encoding helpers ---- */
+function ethCall(prov, to, data){
+  return prov.request({method:'eth_call', params:[{to, data}, 'latest']});
+}
+function encodeCall(sig, ...args){
+  const sigHash=keccakHex(sig).slice(0,10); // 4-byte selector
+  let enc=sigHash;
+  for(const a of args){
+    if(typeof a==='string' && a.startsWith('0x') && a.length===42){
+      enc+=a.substring(2).toLowerCase().padStart(64,'0'); // address
+    } else {
+      enc+=BigInt(a).toString(16).padStart(64,'0'); // uint
+    }
+  }
+  return enc;
+}
+function hexToAscii(hex){
+  let s=''; for(let i=0;i<hex.length;i+=2){ s+=String.fromCharCode(parseInt(hex.substr(i,2),16)); } return s;
+}
+/* Minimal keccak256 (SHA-3) implementation for 4-byte selector + 32-byte hashes.
+   Pure JS, no deps. Used only for ABI selector hashing. */
+function keccakHex(input){
+  // extract arg types portion: e.g. 'balanceOf(address)' -> we hash the full signature string
+  const str=input;
+  return '0x'+keccak256(toUtf8Bytes(str));
+}
+function toUtf8Bytes(str){
+  const out=[]; for(let i=0;i<str.length;i++){ let c=str.charCodeAt(i); if(c<0x80) out.push(c); else if(c<0x800){ out.push(0xc0|(c>>6),0x80|(c&0x3f)); } else { out.push(0xe0|(c>>12),0x80|((c>>6)&0x3f),0x80|(c&0x3f)); } } return out;
+}
+/* SHA3-256 is NOT keccak-256. Implementing full Keccak-256 here: */
+function keccak256(msg){
+  const RC=[0x1,0x8082,0x800000000808a,0x8000000080008000,0x808b,0x80000001,0x800000008081,0x8000000000008000,
+            0x8009,0x8a,0x88,0x80008009,0x8000000a,0x80000000800088,0x80000000080009,0x800000000000800a,
+            0x8000008a,0x800000000000008a,0x8000000008000081,0x8000000008080,0x80000001,0x8000000080008001,
+            0x8000000000008081,0x8000000008008080];
+  const ROT=[1,3,6,10,15,21,28,36,45,55,2,4,8,16,23,32,43,53,62,12,7,18,39,61,25,44,10,19,31,13,6,21,28,34,4,26,14,27,36,17,3,45,29,12,20,35,8,41,24,50,41,5,24,59,39,3,52,18,43,21,10,55,44,7,46,25,52,1,28,38,14,18,19,1];
+  const RHO=[[0,36,3,41,18],[1,44,10,45,2],[62,6,43,15,61],[28,55,25,21,56],[27,20,39,8,14]];
+  const state=new BigInt64Array(25);
+  const rate=136; // bytes (1088 bits) for keccak-256
+  const msgBytes=msg.slice();
+  // padding
+  msgBytes.push(0x01);
+  while((msgBytes.length % rate)!==0) msgBytes.push(0x00);
+  msgBytes[msgBytes.length-1] |= 0x80;
+  function ld(a,i){ let v=0n; for(let b=0;b<8;b++){ v|=BigInt(a[i+b])<<(8n*BigInt(b)); } return v; }
+  for(let off=0; off<msgBytes.length; off+=rate){
+    for(let i=0;i<rate/8;i++){ state[i]^=ld(msgBytes, off+i*8); }
+    let A=state;
+    for(let round=0; round<24; round++){
+      const C=new BigInt64Array(5), D=new BigInt64Array(5);
+      for(let x=0;x<5;x++) C[x]=A[x]^A[x+5]^A[x+10]^A[x+15]^A[x+20];
+      for(let x=0;x<5;x++) D[x]=C[(x+4)%5]^rotL(C[(x+1)%5],1n);
+      for(let i=0;i<25;i++) A[i]^=D[i%5];
+      let B=new BigInt64Array(25);
+      for(let x=0;x<5;x++) for(let y=0;y<5;y++){ B[y*5+((2*x+3*y)%5)]=rotL(A[x+5*y],BigInt(RHO[x][y])); }
+      for(let i=0;i<25;i++) A[i]=B[i];
+      for(let y=0;y<5;y++){ const t0=B[y],t1=B[y+5],t2=B[y+10],t3=B[y+15],t4=B[y+20]; A[y]=t0^(~t1&t2); A[y+5]=t1^(~t2&t3); A[y+10]=t2^(~t3&t4); A[y+15]=t3^(~t4&t0); A[y+20]=t4^(~t0&t1); }
+      A[0]^=BigInt(RC[round]);
+    }
+    state=A;
+  }
+  // squeeze 32 bytes
+  let hex='';
+  for(let i=0;i<4;i++){ let v=state[i]; for(let b=0;b<8;b++){ hex+=(v&0xffn).toString(16).padStart(2,'0'); v>>=8n; } }
+  return hex;
+  function rotL(x,n){ const m=(1n<<64n)-1n; n=n%64n; return ((x<<n)&m)|((x&(m>>n))>>((64n-n)%64n)); }
+}
+
+/* Send an ERC-20 token transfer via eth_sendTransaction (wallet signs). */
+async function sendERC20(tokenAddr, recipient, amount, decimals){
+  const prov=getProvider(); if(!prov) throw new Error('Wallet provider unavailable.');
+  const value=BigInt(Math.floor(parseFloat(amount)*Number(10n**BigInt(decimals||18)))).toString(16);
+  const data=encodeCall('transfer(address,uint256)', recipient, value);
+  // amount is uint256; encode as big int
+  const valueBN=BigInt(Math.floor(parseFloat(amount)*Number(10n**BigInt(decimals||18))));
+  const dataHex='0xa9059cbb' // transfer(address,uint256) selector
+    + recipient.substring(2).toLowerCase().padStart(64,'0')
+    + valueBN.toString(16).padStart(64,'0');
+  return await prov.request({method:'eth_sendTransaction', params:[{from:realState.address, to:tokenAddr, data:dataHex}]});
+}
+
+
 async function realSend(){
   if(!realState.connected){toast('error','Not Connected','Connect wallet first.');return;}
   const recipient=document.getElementById('real-recipient').value.trim();
@@ -828,27 +1212,39 @@ async function realSend(){
   if(!amount||parseFloat(amount)<=0){toast('error','Invalid Amount','Enter valid amount.');return;}
   const btn=document.getElementById('real-send-btn'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Sending...';
   const net=NETWORKS.find(n=>n.id===realState.selectedNetworkId);
-  const valueWei=realState.web3.utils.toWei(amount,'ether');
+  const tk=getSelectedSendToken(); // null = native, otherwise {address,symbol,decimals}
+  const sendSymbol = tk ? tk.symbol : (net?net.symbol:'ETH');
   try{
     const prov=getProvider();
     if(!prov){ throw new Error('Wallet provider unavailable. Reconnect your wallet.'); }
-    const txHash=await prov.request({method:'eth_sendTransaction',params:[{from:realState.address,to:recipient,value:'0x'+BigInt(valueWei).toString(16)}]});
+    let txHash, explorerUrl;
+    if(tk){
+      // ERC-20 token transfer
+      txHash=await sendERC20(tk.address, recipient, amount, tk.decimals);
+      explorerUrl=(net?net.explorer:'')+txHash;
+      renderTokenBalancePreview(); // refresh preview after send
+    } else {
+      // Native token transfer
+      const valueWei=realState.web3.utils.toWei(amount,'ether');
+      txHash=await prov.request({method:'eth_sendTransaction',params:[{from:realState.address,to:recipient,value:'0x'+BigInt(valueWei).toString(16)}]});
+      explorerUrl=(net?net.explorer:'')+txHash;
+    }
     document.getElementById('real-tx-result').classList.remove('hidden');
     document.getElementById('real-tx-content').textContent=
 `✅ Transaction Broadcast on ${net?net.name:'network'}
-──────────────────────────────────────
+──────────────────────────────────────────────
 From:    ${shortAddr(realState.address)}
 To:      ${shortAddr(recipient)}
-Amount:  ${amount} ${net?net.symbol:'ETH'}
+Amount:  ${amount} ${sendSymbol}${tk?(' (ERC-20 token)'):''}
 Memo:    ${memo||'(none)'}
 Tx Hash: ${txHash}
 Time:    ${nowStr()}
 
 The transaction is now pending in the mempool and will be confirmed
 by the network. Track it on a block explorer.`;
-    await sendRecipientNotification({recipient,amount,symbol:net?net.symbol:'ETH',from:realState.address,txHash,network:net?net.name:'unknown',memo,email,webhook});
-    addNotifLog('real',`${amount} ${net?net.symbol:'ETH'} sent to ${shortAddr(recipient)} — recipient notified`);
-    addRealTxRecord({time:new Date().toLocaleString(),status:'success',network:net?net.name:'unknown',from:realState.address,to:recipient,amount,symbol:net?net.symbol:'ETH',txHash,memo,explorer:(net?net.explorer:'')+txHash});
+    await sendRecipientNotification({recipient,amount,symbol:sendSymbol,from:realState.address,txHash,network:net?net.name:'unknown',memo,email,webhook});
+    addNotifLog('real',`${amount} ${sendSymbol} sent to ${shortAddr(recipient)} — recipient notified`);
+    addRealTxRecord({time:new Date().toLocaleString(),status:'success',network:net?net.name:'unknown',from:realState.address,to:recipient,amount,symbol:sendSymbol,txHash,memo,explorer:explorerUrl});
     toast('success','Sent & Notified',shortAddr(txHash));
     document.getElementById('real-recipient').value='';document.getElementById('real-amount').value='';document.getElementById('real-memo').value='';
     document.getElementById('gas-estimate')?.classList.add('hidden');
@@ -1401,166 +1797,382 @@ function initTemplateComposer(){
 }
 
 /* ============================================================
-   EMAIL DELIVERY via EmailJS — sends REAL emails from the browser
+   UNIFIED EMAIL DELIVERY — multi-provider, auto-fallback
+   Providers:
+     • emailjs   — can send to ANY recipient (needs Service+Template+PublicKey)
+     • web3forms — one access key, zero config, works from any origin.
+                   Delivers to the account owner's verified inbox; we send a
+                   copy of every notification there (notification-to-self),
+                   with the recipient's address + message embedded so the
+                   owner can forward it. Great as a guaranteed fallback.
+     • none      — manual mailto button only
+   The dispatcher deliverEmail() tries the configured primary provider,
+   then auto-falls back to Web3Forms (if a key exists), then to mailto.
    ============================================================ */
-const EMAILJS_API='https://api.emailjs.com/api/v1.0/email/send';
+const EMAILJS_API    = 'https://api.emailjs.com/api/v1.0/email/send';
+const WEB3FORMS_API  = 'https://api.web3forms.com/submit';
 
-function getEmailJSConfig(){
+/* ---------- unified config (stored per-user) ---------- */
+function getEmailConfig(){
   try{ return JSON.parse(localStorage.getItem(userKey(K.emailjs))||'null'); }catch(e){ return null; }
 }
-function saveEmailJSConfigData(cfg){
+function saveEmailConfigData(cfg){
   localStorage.setItem(userKey(K.emailjs), JSON.stringify(cfg));
 }
+
+/* ---------- EmailJS helpers (kept for backward compat) ---------- */
+function getEmailJSConfig(){ return getEmailConfig(); }
+function saveEmailJSConfigData(cfg){ saveEmailConfigData(cfg); }
+
+/* ---------- Delivery log (per-user, in-app audit trail) ---------- */
+function getDeliveryLog(){
+  try{ return JSON.parse(localStorage.getItem(userKey(K.dlog))||'[]'); }catch(e){ return []; }
+}
+function addDeliveryRecord(rec){
+  const log=getDeliveryLog();
+  log.unshift(Object.assign({time:new Date().toISOString()},rec));
+  // keep last 100
+  if(log.length>100) log.length=100;
+  localStorage.setItem(userKey(K.dlog), JSON.stringify(log));
+  renderDeliveryLog();
+}
+function clearDeliveryLog(){
+  localStorage.removeItem(userKey(K.dlog));
+  renderDeliveryLog();
+  toast('info','Cleared','Delivery log cleared.');
+}
+
+/* ---------- load config into the settings UI ---------- */
+/* ============================================================
+   FEATURE: RECURRING NOTIFICATION SCHEDULER
+   Lets the user create recurring email-notification jobs that fire
+   on a timer (while the app is open) and persist across reloads.
+   Missed jobs are caught up on resume.
+   ============================================================ */
+/* In-memory map of active interval timers keyed by job id. */
+var __schedTimers={};
+
+/* Persisted job list (per-user). Each job: {id,name,interval,email,subject,bodyType,body,createdAt,lastRun,nextRun,enabled} */
+function getSchedJobs(){
+  const u=currentUser; if(!u) return [];
+  try{ return JSON.parse(localStorage.getItem(K.sched+u.id)||'[]'); }catch(e){ return []; }
+}
+function saveSchedJobs(jobs){
+  const u=currentUser; if(!u) return;
+  localStorage.setItem(K.sched+u.id, JSON.stringify(jobs));
+}
+
+/* Add a new scheduled job from the form fields. */
+function addSchedJob(){
+  if(!currentUser){ toast('error','Not Logged In','Log in to create scheduled jobs.'); return; }
+  const name=(document.getElementById('sched-name').value||'').trim()||'Untitled Job';
+  const interval=parseInt(document.getElementById('sched-interval').value,10)||3600000;
+  const email=(document.getElementById('sched-email').value||'').trim();
+  const subject=(document.getElementById('sched-subject').value||'').trim()||name;
+  const bodyType=document.getElementById('sched-body-type').value;
+  const body=(document.getElementById('sched-body').value||'').trim();
+  if(!email||!email.includes('@')){ toast('error','Invalid Email','Enter a valid recipient email for the scheduled job.'); return; }
+  if(bodyType==='custom' && !body){ toast('error','Empty Message','Enter a custom message body or pick a generated body type.'); return; }
+  const job={
+    id: uid(), name, interval, email, subject, bodyType, body,
+    createdAt: Date.now(), lastRun: 0, nextRun: Date.now()+interval, enabled: true
+  };
+  const jobs=getSchedJobs(); jobs.push(job); saveSchedJobs(jobs);
+  startSchedTimer(job);
+  // clear form
+  document.getElementById('sched-name').value=''; document.getElementById('sched-email').value='';
+  document.getElementById('sched-subject').value=''; document.getElementById('sched-body').value='';
+  toast('success','Job Scheduled', name+' will run every '+fmtInterval(interval));
+  renderSchedJobs();
+}
+
+function fmtInterval(ms){
+  if(ms<60000) return Math.round(ms/1000)+'s';
+  if(ms<3600000) return Math.round(ms/60000)+' min';
+  if(ms<86400000) return Math.round(ms/3600000)+'h';
+  if(ms<604800000) return Math.round(ms/86400000)+'d';
+  return Math.round(ms/604800000)+'w';
+}
+
+/* Build the body text for a job based on its bodyType. */
+function buildSchedBody(job){
+  if(job.bodyType==='custom' || job.bodyType==='reminder') return job.body||'(no message)';
+  if(job.bodyType==='portfolio'){
+    let s='📊 Portfolio Snapshot ('+nowStr()+')\n';
+    if(realState.connected){
+      const net=NETWORKS.find(n=>n.id===realState.selectedNetworkId);
+      s+='Network: '+(net?net.name:'unknown')+'\n';
+      s+='Wallet: '+shortAddr(realState.address)+'\n';
+      s+='Native balance: '+(realState.balance!=null?fmtAmt(realState.balance)+' '+(net?net.symbol:''):'unavailable')+'\n';
+    } else {
+      s+='Wallet: not connected\n';
+    }
+    // simulator portfolio
+    let simTotal=0;
+    simState.wallets.forEach(w=>{ (DEFAULT_TOKENS||[]).forEach(t=>{ simTotal+=(w.balances[t.symbol]||0)*tokenPrice(t.symbol); }); });
+    s+='Simulator portfolio value: $'+simTotal.toLocaleString('en-US',{maximumFractionDigits:2})+'\n';
+    s+='Simulator wallets: '+simState.wallets.length+'\n';
+    return s;
+  }
+  if(job.bodyType==='txdigest'){
+    const hist=getRealTxHistory();
+    const since=Date.now()-86400000;
+    const recent=hist.filter(t=>{ try{ return new Date(t.time).getTime()>since; }catch(e){ return false; } });
+    let s='📋 Transaction Digest — last 24h ('+nowStr()+')\n';
+    if(!recent.length){ s+='No transactions in the last 24 hours.\n'; return s; }
+    s+=recent.length+' transaction(s):\n';
+    recent.forEach(t=>{ s+=' • '+t.amount+' '+(t.symbol||'ETH')+' → '+shortAddr(t.to)+' ('+t.status+')\n'; });
+    return s;
+  }
+  return job.body||'';
+}
+
+/* Fire a single scheduled job: sends the email via the unified deliverEmail(). */
+async function fireSchedJob(job){
+  try{
+    const body=buildSchedBody(job);
+    const res=await deliverEmail(job.email, job.subject, body, null, {context:'scheduled job: '+job.name});
+    job.lastRun=Date.now();
+    job.nextRun=Date.now()+job.interval;
+    addDeliveryRecord({
+      to: job.email, subject: job.subject,
+      provider: res&&res.provider?res.provider:(res&&res.primary||'unknown'),
+      status: res&&res.ok?'success':'failed',
+      detail: 'Scheduled job "'+job.name+'" — '+(res&&res.ok?'delivered':(res&&res.reason||'failed'))
+    });
+    toast(res&&res.ok?'success':'warning', 'Scheduled: '+job.name, res&&res.ok?('Sent to '+job.email):('Delivery issue — check Email Delivery tab'));
+  }catch(e){
+    addDeliveryRecord({to:job.email,subject:job.subject,provider:'unknown',status:'failed',detail:'Scheduled job "'+job.name+'" error: '+(e.message||'')});
+    toast('error','Scheduled Job Failed', job.name+': '+(e.message||'unknown error'));
+  }
+  // persist updated run times
+  const jobs=getSchedJobs();
+  const idx=jobs.findIndex(j=>j.id===job.id);
+  if(idx>=0){ jobs[idx]=job; saveSchedJobs(jobs); }
+  renderSchedJobs();
+}
+
+/* Start (or restart) the interval timer for a job. */
+function startSchedTimer(job){
+  if(__schedTimers[job.id]){ clearInterval(__schedTimers[job.id]); }
+  if(!job.enabled) return;
+  __schedTimers[job.id]=setInterval(()=>{ fireSchedJob(job); }, job.interval);
+}
+
+/* On app load / login: resume all jobs and catch up missed ones. */
+function resumeSchedJobs(){
+  // clear all existing timers
+  Object.keys(__schedTimers).forEach(k=>{ clearInterval(__schedTimers[k]); delete __schedTimers[k]; });
+  const jobs=getSchedJobs();
+  const now=Date.now();
+  jobs.forEach(job=>{
+    if(!job.enabled) return;
+    // catch up missed runs (fire once if nextRun has passed)
+    if(job.nextRun && job.nextRun < now){
+      fireSchedJob(job);
+    }
+    startSchedTimer(job);
+  });
+}
+
+/* Stop all timers (on logout). */
+function stopSchedJobs(){
+  Object.keys(__schedTimers).forEach(k=>{ clearInterval(__schedTimers[k]); delete __schedTimers[k]; });
+}
+
+/* Toggle a job on/off. */
+function toggleSchedJob(id){
+  const jobs=getSchedJobs();
+  const job=jobs.find(j=>j.id===id);
+  if(!job) return;
+  job.enabled=!job.enabled;
+  if(job.enabled){ job.nextRun=Date.now()+job.interval; startSchedTimer(job); }
+  else{ if(__schedTimers[id]){ clearInterval(__schedTimers[id]); delete __schedTimers[id]; } }
+  saveSchedJobs(jobs);
+  toast('info', job.enabled?'Job Enabled':'Job Paused', job.name);
+  renderSchedJobs();
+}
+
+/* Run a job immediately (manual trigger). */
+function runSchedJobNow(id){
+  const jobs=getSchedJobs();
+  const job=jobs.find(j=>j.id===id);
+  if(job) fireSchedJob(job);
+}
+
+/* Delete a scheduled job. */
+function deleteSchedJob(id){
+  let jobs=getSchedJobs();
+  jobs=jobs.filter(j=>j.id!==id);
+  saveSchedJobs(jobs);
+  if(__schedTimers[id]){ clearInterval(__schedTimers[id]); delete __schedTimers[id]; }
+  toast('info','Job Deleted','Removed from scheduler.');
+  renderSchedJobs();
+}
+
+/* Render the list of scheduled jobs. */
+function renderSchedJobs(){
+  const box=document.getElementById('sched-jobs-list');
+  if(!box) return;
+  const jobs=getSchedJobs();
+  if(!jobs.length){
+    box.innerHTML='<p style="color:var(--text-muted);font-size:0.82rem;padding:10px 0;">No scheduled jobs yet. Create one above.</p>';
+    return;
+  }
+  let html='';
+  jobs.forEach(job=>{
+    const lastRunStr=job.lastRun?new Date(job.lastRun).toLocaleString():'never';
+    const nextRunStr=job.nextRun?new Date(job.nextRun).toLocaleString():'—';
+    html+='<div style="border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:var(--bg-secondary,#0f1320);">';
+    html+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">';
+    html+='<div><div style="font-weight:600;font-size:0.92rem;">'+escHtml(job.name)+'</div>';
+    html+='<div style="font-size:0.74rem;color:var(--text-muted);margin-top:3px;">Every '+fmtInterval(job.interval)+' → '+escHtml(job.email)+'</div>';
+    html+='<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">Body: '+escHtml(job.bodyType)+' · Last run: '+escHtml(lastRunStr)+' · Next: '+escHtml(nextRunStr)+'</div></div>';
+    html+='<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    html+='<button class="btn btn-secondary btn-sm" onclick="runSchedJobNow(\''+job.id+'\')">▶ Run now</button>';
+    html+='<button class="btn btn-secondary btn-sm" onclick="toggleSchedJob(\''+job.id+'\')">'+(job.enabled?'⏸ Pause':'▶ Enable')+'</button>';
+    html+='<button class="btn btn-danger btn-sm" onclick="deleteSchedJob(\''+job.id+'\')">🗑 Delete</button>';
+    html+='</div></div></div>';
+  });
+  box.innerHTML=html;
+}
+
 function loadEmailJSConfig(){
-  const cfg=getEmailJSConfig();
+  const cfg=getEmailConfig();
+  // provider selector
+  const prov=document.getElementById('email-provider');
+  if(prov) prov.value = (cfg&&cfg.provider)||'none';
+  // emailjs fields
   const svc=document.getElementById('emailjs-service');
   const tpl=document.getElementById('emailjs-template');
-  const pk=document.getElementById('emailjs-publickey');
-  const fn=document.getElementById('emailjs-fromname');
+  const pk =document.getElementById('emailjs-publickey');
+  const fn =document.getElementById('emailjs-fromname');
   const testTo=document.getElementById('emailjs-test-to');
+  // web3forms fields
+  const w3key=document.getElementById('w3f-access-key');
+  const w3owner=document.getElementById('w3f-owner-email');
   if(svc) svc.value = cfg?cfg.serviceId||'':'';
   if(tpl) tpl.value = cfg?cfg.templateId||'':'';
   if(pk)  pk.value  = cfg?cfg.publicKey||'':'';
-  if(fn)  fn.value  = cfg?cfg.fromName||'':'';
+  if(fn){ const e=document.getElementById('emailjs-fromname'); if(e) e.value=cfg?cfg.fromName||'':''; }
   if(testTo) testTo.value = cfg?cfg.testTo||'':'';
+  if(w3key) w3key.value = cfg?cfg.w3fKey||'':'';
+  if(w3owner) w3owner.value = cfg?cfg.w3fOwner||'':'';
+  toggleProviderFields();
   updateEmailJSStatus();
+  renderDeliveryLog();
+  // show the current origin in the EmailJS guide so users know what to whitelist
+  const hint=document.getElementById('w3-origin-hint');
+  if(hint){ try{ hint.textContent=location.origin||'(this site)'; }catch(e){} }
 }
+
+/* show/hide field groups based on selected provider */
+function toggleProviderFields(){
+  const prov=document.getElementById('email-provider');
+  const v=(prov&&prov.value)||'none';
+  const ej=document.getElementById('emailjs-fields');   if(ej) ej.classList.toggle('hidden', v!=='emailjs');
+  const w3=document.getElementById('w3f-fields');       if(w3) w3.classList.toggle('hidden', v!=='web3forms');
+  const noneBox=document.getElementById('email-none-box'); if(noneBox) noneBox.classList.toggle('hidden', v!=='none');
+}
+
+function isEmailConfigured(){
+  const cfg=getEmailConfig();
+  if(!cfg) return false;
+  if(cfg.provider==='emailjs')  return !!(cfg.serviceId&&cfg.templateId&&cfg.publicKey);
+  if(cfg.provider==='web3forms')return !!(cfg.w3fKey);
+  return false;
+}
+
 function updateEmailJSStatus(){
-  const cfg=getEmailJSConfig();
+  const cfg=getEmailConfig();
   const el=document.getElementById('emailjs-config-status');
-  if(el) el.textContent = cfg
-    ? '✅ Configured — notifications will be sent automatically via EmailJS.'
-    : 'Not configured — notifications will show a preview + mailto link only.';
+  let msg;
+  if(!cfg||cfg.provider==='none'||(!isEmailConfigured())){
+    msg='⚠️ Not configured — notifications will show a preview + a manual email button. Set up Web3Forms (1 key, 1 minute) or EmailJS for automatic delivery.';
+  } else if(cfg.provider==='web3forms'){
+    msg='✅ Web3Forms configured — a copy of every notification is delivered to your inbox automatically. (EmailJS can reach the recipient directly — see below.)';
+  } else if(cfg.provider==='emailjs'){
+    msg='✅ EmailJS configured — notifications are sent directly to each recipient\'s inbox automatically.';
+  } else { msg='Not configured.'; }
+  if(el) el.textContent=msg;
 }
+
 function saveEmailJSConfig(){
-  const serviceId=document.getElementById('emailjs-service').value.trim();
-  const templateId=document.getElementById('emailjs-template').value.trim();
-  const publicKey=document.getElementById('emailjs-publickey').value.trim();
+  const provider=(document.getElementById('email-provider')||{}).value||'none';
+  const serviceId=(document.getElementById('emailjs-service')||{}).value||''; (serviceId.trim&&(serviceId=serviceId.trim()));
+  const templateId=(document.getElementById('emailjs-template')||{}).value||''; (templateId.trim&&(templateId=templateId.trim()));
+  const publicKey=(document.getElementById('emailjs-publickey')||{}).value||''; (publicKey.trim&&(publicKey=publicKey.trim()));
   const fnEl=document.getElementById('emailjs-fromname');
   const fromName=fnEl?fnEl.value.trim():'';
-  const testTo=document.getElementById('emailjs-test-to').value.trim();
+  const testToEl=document.getElementById('emailjs-test-to');
+  const testTo=testToEl?testToEl.value.trim():'';
+  const w3fKeyEl=document.getElementById('w3f-access-key');
+  const w3fKey=w3fKeyEl?w3fKeyEl.value.trim():'';
+  const w3fOwnerEl=document.getElementById('w3f-owner-email');
+  const w3fOwner=w3fOwnerEl?w3fOwnerEl.value.trim():'';
+
   const st=document.getElementById('emailjs-status');
-  if(!serviceId||!templateId||!publicKey){
+  if(provider==='emailjs' && (!serviceId||!templateId||!publicKey)){
     if(st){ st.className='emailjs-status err'; st.textContent='⚠️ Please fill in Service ID, Template ID, and Public Key.'; }
     toast('error','Missing Fields','Fill in all three EmailJS IDs.');
     return;
   }
-  saveEmailJSConfigData({serviceId,templateId,publicKey,fromName,testTo});
-  if(st){
-    st.className='emailjs-status ok';
-    st.textContent='✅ Email config saved! '+(fromName?('Recipients will see "'+fromName+'" as the sender name. '):'')+'Click "Send Test Email" to verify it works.';
+  if(provider==='web3forms' && !w3fKey){
+    if(st){ st.className='emailjs-status err'; st.textContent='⚠️ Please paste your Web3Forms Access Key.'; }
+    toast('error','Missing Key','Paste your Web3Forms access key.');
+    return;
   }
+  saveEmailConfigData({provider,serviceId,templateId,publicKey,fromName,testTo,w3fKey,w3fOwner});
+  if(st){ st.className='emailjs-status ok'; st.textContent='✅ Email delivery config saved! Click "Send Test Email" to verify it works.'; }
   updateEmailJSStatus();
-  toast('success','Email Config Saved','Notifications will now be delivered automatically.');
+  toast('success','Saved','Email delivery config saved.');
 }
+
 function clearEmailJSConfig(){
   localStorage.removeItem(userKey(K.emailjs));
-  ['emailjs-service','emailjs-template','emailjs-publickey','emailjs-fromname','emailjs-test-to'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
+  ['emailjs-service','emailjs-template','emailjs-publickey','emailjs-fromname','emailjs-test-to','w3f-access-key','w3f-owner-email'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
+  const prov=document.getElementById('email-provider'); if(prov) prov.value='none';
   const st=document.getElementById('emailjs-status');
   if(st){ st.className='emailjs-status info'; st.textContent='Email config cleared.'; }
+  toggleProviderFields();
   updateEmailJSStatus();
   toast('info','Cleared','Email delivery config removed.');
 }
-/* Send a test email to verify the EmailJS setup works. */
-async function sendTestEmail(){
-  const cfg=getEmailJSConfig();
-  const st=document.getElementById('emailjs-status');
-  if(!cfg||!cfg.serviceId||!cfg.templateId||!cfg.publicKey){
-    if(st){ st.className='emailjs-status err'; st.textContent='⚠️ Save your EmailJS config first.'; }
-    toast('error','No Config','Save your EmailJS IDs first, then test.');
-    return;
-  }
-  const to=document.getElementById('emailjs-test-to').value.trim() || cfg.testTo;
-  if(!to){ if(st){ st.className='emailjs-status err'; st.textContent='⚠️ Enter a test recipient email above.'; } toast('error','No Recipient','Enter your own email in the test field.'); return; }
-  if(st){ st.className='emailjs-status info'; st.textContent='⏳ Sending test email to '+to+'…'; }
-  const btn=event&&event.target; if(btn){ btn.disabled=true; }
+
+/* ---------- Web3Forms delivery (notification-to-self) ---------- */
+async function deliverViaWeb3Forms(accessKey, ownerEmail, subject, textBody, htmlBody){
+  if(!accessKey) return {ok:false,reason:'web3forms-no-key'};
   try{
-    const r=await fetch(EMAILJS_API,{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        service_id:cfg.serviceId, template_id:cfg.templateId, user_id:cfg.publicKey,
-        template_params:{
-          to_email:to,
-          from_name:cfg.fromName||'SOS WALLETS',
-          subject:'✅ SOS WALLETS — Test Email (EmailJS connected!)',
-          message:'Great! Your EmailJS setup is working. Real transaction notifications from SOS WALLETS will now be delivered to recipients automatically.\n\n— '+(cfg.fromName||'SOS WALLETS'),
-          html:'<div style="font-family:sans-serif;max-width:560px;margin:auto;background:#0a0e17;color:#fff;border-radius:12px;overflow:hidden;border:1px solid #1e2a44"><div style="background:linear-gradient(135deg,#0070f3,#00d4ff);padding:24px 28px"><h2 style="margin:0;color:#fff">⚡ '+(cfg.fromName||'SOS WALLETS')+'</h2><p style="margin:4px 0 0;color:rgba(255,255,255,0.85)">Test Email — EmailJS Connected</p></div><div style="padding:28px"><p style="font-size:16px;line-height:1.6">✅ Your EmailJS setup is working!</p><p style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.75)">Real transaction notifications will now be delivered to recipients automatically — no manual steps needed. Recipients will see this as sent from <strong>'+(cfg.fromName||'SOS WALLETS')+'</strong>.</p><div style="margin-top:20px;padding:14px;background:#131a2a;border-radius:8px;font-size:13px;color:rgba(255,255,255,0.6)">Sent to: '+to+'</div></div></div>'
-        }
-      })
+    // Web3Forms accepts any custom fields; they appear in the email body sent to the owner.
+    const payload={
+      access_key:accessKey,
+      subject:subject||'SOS WALLETS Notification',
+      from_name:(getEmailConfig()&&getEmailConfig().fromName)||'SOS WALLETS',
+      // custom fields surfaced in the email:
+      message:textBody,
+      html_message:htmlBody,
+      notification_copy:'true',
+      app:'SOS WALLETS v3'
+    };
+    if(ownerEmail) payload.email=ownerEmail; // sets reply-to
+    const r=await fetch(WEB3FORMS_API,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify(payload)
     });
-    const txt=await r.text();
-    if(r.ok){
-      if(st){ st.className='emailjs-status ok'; st.textContent='✅ Test email sent to '+to+'! Check your inbox (and spam folder).'; }
-      toast('success','Test Email Sent','Check '+to+' — it should arrive shortly.');
-    } else {
-      if(st){ st.className='emailjs-status err'; st.textContent='❌ EmailJS error ('+r.status+'): '+txt; }
-      toast('error','Test Failed','EmailJS returned: '+txt);
-    }
-  }catch(e){
-    if(st){ st.className='emailjs-status err'; st.textContent='❌ Network error: '+e.message; }
-    toast('error','Network Error',e.message);
-  }finally{ if(btn) btn.disabled=false; }
-}
-/* Diagnostic: runs a full EmailJS connection check and shows exact problems + fixes */
-async function diagnoseEmailJS(){
-  const cfg=getEmailJSConfig();
-  const st=document.getElementById('emailjs-status');
-  const lines=[];
-  lines.push('🔍 EmailJS Diagnostic — '+new Date().toLocaleString());
-  lines.push('──────────────────────────────');
-  lines.push('This site origin: '+location.origin);
-  lines.push('');
-  if(!cfg||!cfg.serviceId||!cfg.templateId||!cfg.publicKey){
-    lines.push('❌ Config incomplete or not saved.');
-    lines.push('   serviceId: '+(cfg&&cfg.serviceId?cfg.serviceId:'(missing)'));
-    lines.push('   templateId: '+(cfg&&cfg.templateId?cfg.templateId:'(missing)'));
-    lines.push('   publicKey: '+(cfg&&cfg.publicKey?cfg.publicKey:'(missing)'));
-    lines.push('');
-    lines.push('👉 Fix: Fill all fields in Email Delivery and click Save.');
-    if(st){ st.className='emailjs-status err'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
-    toast('error','Config Incomplete','Fill all EmailJS fields and save first.');
-    return;
-  }
-  lines.push('✅ Config saved:');
-  lines.push('   Service ID:  '+cfg.serviceId);
-  lines.push('   Template ID: '+cfg.templateId);
-  lines.push('   Public Key:  '+cfg.publicKey);
-  lines.push('   From Name:   '+(cfg.fromName||'(none — will use SOS WALLETS)'));
-  lines.push('');
-  lines.push('⏳ Sending test request to EmailJS API…');
-  if(st){ st.className='emailjs-status info'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
-  const res=await deliverEmailViaEmailJS(cfg.testTo||'cryptonotifywallets@gmail.com','SOS WALLETS Diagnostic','Diagnostic test.','<p>Diagnostic test.</p>');
-  lines.push('');
-  if(res.ok){
-    lines.push('🎉 SUCCESS! EmailJS accepted the request.');
-    lines.push('   The email should arrive at '+(cfg.testTo||'cryptonotifywallets@gmail.com')+' shortly.');
-    lines.push('   If it does NOT arrive, check: spam folder, or EmailJS Activity log at dashboard.emailjs.com → Activity.');
-    if(st){ st.className='emailjs-status ok'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
-    toast('success','EmailJS Working','Test request accepted. Check inbox + EmailJS Activity log.');
-  } else {
-    lines.push('❌ FAILED — '+res.reason);
-    if(res.raw) lines.push('   Raw response: '+res.raw);
-    lines.push('');
-    lines.push('COMMON FIXES:');
-    lines.push('1. Allowed Domains: Go to dashboard.emailjs.com → Account → Security.');
-    lines.push('   If "Allowed Domains" is enabled, ADD this origin: '+location.origin);
-    lines.push('2. Non-browser block: On that same Security page, if "Allow API access');
-    lines.push('   outside the browser" is OFF, that can block some requests — try enabling it.');
-    lines.push('3. Template fields: In your EmailJS template set:');
-    lines.push('     To Email → {{to_email}}   Subject → {{subject}}');
-    lines.push('     From Name → {{from_name}}  Content → {{html}}');
-    lines.push('     (ALL must be DOUBLE braces {{ }})');
-    lines.push('4. Activity log: dashboard.emailjs.com → Activity shows every send attempt');
-    lines.push('   with the exact error — check there for the real reason.');
-    if(st){ st.className='emailjs-status err'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
-    toast('error','EmailJS Failed', res.reason);
-  }
+    const data=await r.json().catch(()=>({}));
+    if(r.ok && data.success) return {ok:true, provider:'web3forms'};
+    let reason=(data&&data.message)||('web3forms-error:'+r.status);
+    if(r.status===429) reason='Web3Forms rate limit (429) — too many requests, wait a moment.';
+    if(/invalid access key/i.test(reason)) reason='Invalid Web3Forms Access Key — check the key in Email Delivery settings.';
+    return {ok:false, reason, raw:JSON.stringify(data), status:r.status};
+  }catch(e){ return {ok:false, reason:'network:'+e.message}; }
 }
 
-/* Core: send a real email via EmailJS. Returns true on success. */
+/* ---------- EmailJS delivery (can reach any recipient) ---------- */
 async function deliverEmailViaEmailJS(toEmail, subject, textBody, htmlBody){
-  const cfg=getEmailJSConfig();
-  if(!cfg||!cfg.serviceId||!cfg.templateId||!cfg.publicKey) return {ok:false,reason:'not-configured'};
+  const cfg=getEmailConfig();
+  if(!cfg||cfg.provider!=='emailjs'||!cfg.serviceId||!cfg.templateId||!cfg.publicKey) return {ok:false,reason:'not-configured'};
   try{
     const r=await fetch(EMAILJS_API,{
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -1569,16 +2181,15 @@ async function deliverEmailViaEmailJS(toEmail, subject, textBody, htmlBody){
         template_params:{ to_email:toEmail, from_name:cfg.fromName||'SOS WALLETS', subject, message:textBody, html:htmlBody }
       })
     });
-    if(r.ok) return {ok:true};
+    if(r.ok) return {ok:true, provider:'emailjs'};
     const txt=await r.text();
-    /* Translate common EmailJS errors into plain-English guidance */
     let friendly=txt;
     if(r.status===403 && /non-browser/i.test(txt)){
       friendly='EmailJS blocked this request. Go to dashboard.emailjs.com → Account → Security and either (a) enable "Allow API access outside browser" OR (b) add this site\'s domain ('+location.origin+') to the Allowed Domains list.';
     } else if(r.status===403){
       friendly='EmailJS rejected this (403). Check Allowed Domains at dashboard.emailjs.com → Account → Security — add '+location.origin+' to the list.';
     } else if(r.status===404){
-      friendly='Template ID not found ('+cfg.templateId+'). Open the template in EmailJS, go to its Settings tab, and copy the real Template ID (starts with template_).';
+      friendly='Template ID not found ('+cfg.templateId+'). Copy the real Template ID (starts with template_) from the EmailJS template Settings tab.';
     } else if(r.status===422){
       friendly='Recipient address issue (422). In your EmailJS template, set "To Email" to {{to_email}} (double braces).';
     } else if(r.status===429){
@@ -1586,10 +2197,163 @@ async function deliverEmailViaEmailJS(toEmail, subject, textBody, htmlBody){
     } else if(r.status===401){
       friendly='Invalid Public Key (401). Re-check the Public Key in Email Delivery settings.';
     }
-    return {ok:false,reason:'emailjs-error:'+r.status+':'+friendly, raw:txt, status:r.status};
-  }catch(e){ return {ok:false,reason:'network:'+e.message}; }
+    return {ok:false, reason:'emailjs-error:'+r.status+':'+friendly, raw:txt, status:r.status};
+  }catch(e){ return {ok:false, reason:'network:'+e.message}; }
 }
 
+/* ============================================================
+   UNIFIED DISPATCHER — the heart of the fix.
+   Tries primary provider → auto-falls back to Web3Forms → mailto.
+   Always returns a structured result + logs to the delivery log.
+   ============================================================ */
+async function deliverEmail(toEmail, subject, textBody, htmlBody, opts){
+  opts=opts||{};
+  const cfg=getEmailConfig();
+  const attempts=[];
+  let result=null;
+
+  // 1) Primary provider
+  if(cfg && cfg.provider==='emailjs' && cfg.serviceId && cfg.templateId && cfg.publicKey && toEmail){
+    attempts.push('emailjs');
+    result=await deliverEmailViaEmailJS(toEmail, subject, textBody, htmlBody);
+    if(result.ok){
+      addDeliveryRecord({to:toEmail, subject, provider:'emailjs', status:'success', detail:'Delivered to recipient via EmailJS'});
+      return Object.assign(result,{primary:'emailjs'});
+    }
+  }
+
+  // 2) Auto-fallback to Web3Forms (notification-to-self) if a key exists.
+  //    This is the safety net: even if EmailJS 403-blocked or wasn't set up,
+  //    the owner still gets a copy in their inbox.
+  const w3key=cfg&&cfg.w3fKey;
+  if(w3key){
+    attempts.push('web3forms');
+    const w3=await deliverViaWeb3Forms(w3key, cfg&&cfg.w3fOwner, subject, textBody, htmlBody);
+    if(w3.ok){
+      addDeliveryRecord({
+        to:toEmail||'(self)',
+        subject,
+        provider:'web3forms',
+        status: toEmail ? 'fallback-self' : 'self',
+        detail: toEmail
+          ? 'Primary provider unavailable — a copy was delivered to YOUR inbox via Web3Forms. Forward it to the recipient.'
+          : 'Copy delivered to your inbox via Web3Forms.'
+      });
+      return Object.assign(w3,{primary:'web3forms', fellBack: attempts.length>1, originalError: result&&result.reason});
+    }
+    // if emailjs also failed, keep the emailjs reason as primary message but record w3f too
+    if(!result) result=w3;
+  }
+
+  // 3) Nothing delivered automatically
+  const reason = result ? result.reason : (cfg&&cfg.provider==='none' ? 'no-provider' : 'not-configured');
+  addDeliveryRecord({to:toEmail||'(none)', subject, provider: attempts[0]||'none', status:'failed', detail:reason});
+  return {ok:false, reason, attempts, raw: result&&result.raw};
+}
+
+/* ---------- Test email ---------- */
+async function sendTestEmail(){
+  const cfg=getEmailConfig();
+  const st=document.getElementById('emailjs-status');
+  const to=document.getElementById('emailjs-test-to').value.trim() || (cfg&&cfg.testTo);
+  if(!to){ if(st){ st.className='emailjs-status err'; st.textContent='⚠️ Enter a test recipient email above.'; } toast('error','No Recipient','Enter your own email in the test field.'); return; }
+  if(!isEmailConfigured()){
+    if(st){ st.className='emailjs-status err'; st.textContent='⚠️ Save your email config first (pick a provider + fill the fields).'; }
+    toast('error','No Config','Pick a provider and save config first, then test.'); return;
+  }
+  if(st){ st.className='emailjs-status info'; st.textContent='⏳ Sending test email to '+to+'…'; }
+  const fn=(cfg&&cfg.fromName)||'SOS WALLETS';
+  const subject='✅ SOS WALLETS — Test Email (delivery working!)';
+  const message='Great! Your email delivery setup is working. Real transaction notifications from SOS WALLETS will now be delivered automatically.\n\n— '+fn;
+  const html='<div style="font-family:sans-serif;max-width:560px;margin:auto;background:#0a0e17;color:#fff;border-radius:12px;overflow:hidden;border:1px solid #1e2a44"><div style="background:linear-gradient(135deg,#0070f3,#00d4ff);padding:24px 28px"><h2 style="margin:0;color:#fff">⚡ '+fn+'</h2><p style="margin:4px 0 0;color:rgba(255,255,255,0.85)">Test Email — Delivery Connected</p></div><div style="padding:28px"><p style="font-size:16px;line-height:1.6">✅ Your email delivery setup is working!</p><p style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.75)">Real transaction notifications will now be delivered automatically — no manual steps needed.</p><div style="margin-top:20px;padding:14px;background:#131a2a;border-radius:8px;font-size:13px;color:rgba(255,255,255,0.6)">Sent to: '+to+'</div></div></div>';
+  const res=await deliverEmail(to, subject, message, html, {test:true});
+  if(res.ok){
+    const who = res.primary==='web3forms' ? 'your inbox via Web3Forms (forward to the recipient if needed)' : to+' via EmailJS';
+    if(st){ st.className='emailjs-status ok'; st.textContent='✅ Test email sent to '+who+'! Check your inbox (and spam folder).'; }
+    toast('success','Test Email Sent','Delivered via '+(res.primary||'provider')+'. Check your inbox.');
+  } else {
+    if(st){ st.className='emailjs-status err'; st.textContent='❌ Test failed: '+res.reason; }
+    toast('error','Test Failed', res.reason);
+  }
+}
+
+/* ---------- Diagnostic ---------- */
+async function diagnoseEmailJS(){
+  const cfg=getEmailConfig();
+  const st=document.getElementById('emailjs-status');
+  const lines=[];
+  lines.push('🔍 Delivery Diagnostic — '+new Date().toLocaleString());
+  lines.push('   Provider: '+(cfg?cfg.provider:'(none)'));
+  if(!cfg || cfg.provider==='none' || !isEmailConfigured()){
+    lines.push('❌ No provider configured.');
+    lines.push('   Easiest fix: choose Web3Forms, paste one access key (get it free at');
+    lines.push('   https://app.web3forms.com/onboarding/create — no dashboard, works from any site).');
+    lines.push('   Or use EmailJS to send directly to each recipient (needs 3 IDs).');
+    if(st){ st.className='emailjs-status err'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
+    toast('error','Config Incomplete','Pick a provider and save config first.');
+    return;
+  }
+  lines.push('   serviceId: '+(cfg.serviceId||'(n/a)'));
+  lines.push('   templateId:'+(cfg.templateId||'(n/a)'));
+  lines.push('   publicKey: '+(cfg.publicKey||'(n/a)'));
+  lines.push('   w3fKey:    '+(cfg.w3fKey?'(set)':'(not set)'));
+  lines.push('');
+  lines.push('⏳ Sending test request…');
+  if(st){ st.className='emailjs-status info'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
+  const to=cfg.testTo||'cryptonotifywallets@gmail.com';
+  const res=await deliverEmail(to,'SOS WALLETS Diagnostic','Diagnostic test.','<p>Diagnostic test.</p>');
+  lines.push('');
+  if(res.ok){
+    lines.push('🎉 SUCCESS via '+(res.primary||'provider')+'!');
+    if(res.primary==='web3forms'){
+      lines.push('   A copy was delivered to your Web3Forms inbox. To send DIRECTLY to');
+      lines.push('   recipients, also configure EmailJS (it can reach any address).');
+    } else {
+      lines.push('   Email delivered to '+to+'. Check inbox + EmailJS Activity log.');
+    }
+    if(st){ st.className='emailjs-status ok'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
+    toast('success','Delivery Working','Test accepted via '+(res.primary||'provider')+'.');
+  } else {
+    lines.push('❌ FAILED — '+res.reason);
+    if(res.raw) lines.push('   Raw: '+res.raw);
+    lines.push('');
+    lines.push('QUICK FIXES:');
+    lines.push('• Easiest: switch to Web3Forms (1 key, no domain restrictions).');
+    lines.push('• EmailJS 403: dashboard.emailjs.com → Account → Security → add');
+    lines.push('   '+location.origin+' to Allowed Domains (or enable "Allow API outside browser").');
+    lines.push('• EmailJS template: To Email → {{to_email}}, Subject → {{subject}},');
+    lines.push('   From Name → {{from_name}}, Content → {{html}} (ALL double braces).');
+    if(st){ st.className='emailjs-status err'; st.style.whiteSpace='pre-wrap'; st.textContent=lines.join('\n'); }
+    toast('error','Delivery Failed', res.reason);
+  }
+}
+
+/* ---------- Render the in-app delivery log ---------- */
+function renderDeliveryLog(){
+  const wrap=document.getElementById('delivery-log');
+  if(!wrap) return;
+  const log=getDeliveryLog();
+  if(!log.length){ wrap.innerHTML='<div style="color:var(--text-muted);font-size:0.8rem;padding:8px 0">No notifications delivered yet. Send a transaction or test email to see delivery history here.</div>'; return; }
+  const color={success:'#10b981','fallback-self':'#f59e0b',self:'#0ea5e9',failed:'#ef4444'};
+  const label={success:'✅ Delivered','fallback-self':'⚠️ Fallback to you',self:'✅ Copy to you',failed:'❌ Failed'};
+  wrap.innerHTML=log.slice(0,25).map(r=>{
+    const c=color[r.status]||'#888';
+    const l=label[r.status]||r.status;
+    const d=new Date(r.time);
+    return '<div style="border-left:3px solid '+c+';padding:8px 10px;margin-bottom:6px;background:var(--card);border-radius:0 6px 6px 0;font-size:0.78rem">'+
+      '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span style="color:'+c+';font-weight:600">'+l+' · '+escHtml(r.provider)+'</span>'+
+      '<span style="color:var(--text-muted)">'+d.toLocaleString()+'</span></div>'+
+      '<div style="margin-top:4px;color:var(--text)">To: '+escHtml(r.to||'-')+'</div>'+
+      '<div style="color:var(--text-muted)">Subject: '+escHtml(r.subject||'-')+'</div>'+
+      (r.detail?'<div style="color:var(--text-muted);margin-top:2px;font-size:0.72rem">'+escHtml(r.detail)+'</div>':'')+
+    '</div>';
+  }).join('');
+}
+function escHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ============================================================
+   RECIPIENT NOTIFICATION — now uses the unified dispatcher
+   ============================================================ */
 async function sendRecipientNotification({recipient,amount,symbol,from,txHash,network,memo,email,webhook,notifyOnly}){
   const tpl=getTemplate();
   const vars={
@@ -1605,12 +2369,11 @@ async function sendRecipientNotification({recipient,amount,symbol,from,txHash,ne
   let webhookOk=false,webhookErr=null;
   if(webhook){try{await fetch(webhook,{method:'POST',headers:{'Content-Type':'application/json'},mode:'no-cors',body:JSON.stringify({event:notifyOnly?'incoming_deposit_alert':'incoming_deposit',recipient,amount,symbol,from,txHash,network,memo,status:notifyOnly?'alert_only_no_tx':'pending',notifyOnly:!!notifyOnly,sender:tpl.sender,timestamp:new Date().toISOString(),subject,message:body,html:htmlEmail})});webhookOk=true;}catch(e){webhookErr=e.message;}}
 
-  // 2) REAL email delivery via EmailJS (if email + EmailJS configured)
+  // 2) REAL email delivery via the unified dispatcher (auto-fallback)
   let emailResult=null;
   if(email){
-    emailResult=await deliverEmailViaEmailJS(email, subject, body, htmlEmail);
+    emailResult=await deliverEmail(email, subject, body, htmlEmail);
   }
-  const emailjsConfigured = !!(getEmailJSConfig()&&getEmailJSConfig().serviceId);
   let emailLink=null; if(email) emailLink=`mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
   // 3) Build the in-app preview + status
@@ -1628,13 +2391,22 @@ async function sendRecipientNotification({recipient,amount,symbol,from,txHash,ne
   if(webhook) st+=webhookOk?'✅ Webhook dispatched to '+webhook+'\n':'⚠️ Webhook failed: '+(webhookErr||'error')+'\n';
   if(email){
     if(emailResult&&emailResult.ok){
-      st+='✅ Email DELIVERED to '+email+' via EmailJS\n';
-      toast('success','Email Sent','Notification delivered to '+email);
-    } else if(emailResult&&emailResult.reason==='not-configured'){
-      st+='ℹ️ Email not auto-sent — EmailJS not configured. Click below to send manually via your email app.\n  (Set up EmailJS in More → Email Delivery for automatic delivery.)\n';
-      toast('info','Email Not Configured','Set up EmailJS in More → Email Delivery to auto-send. A manual email button is shown below.');
+      if(emailResult.primary==='emailjs'){
+        st+='✅ Email DELIVERED to '+email+' via EmailJS\n';
+        toast('success','Email Sent','Notification delivered to '+email);
+      } else if(emailResult.primary==='web3forms'){
+        st+='✅ A copy of this notification was delivered to YOUR inbox via Web3Forms.\n';
+        st+='   Forward it to '+email+' so the recipient is notified.\n';
+        st+='   (To send directly to recipients with no forwarding, set up EmailJS in More → Email Delivery.)\n';
+        toast('success','Copy Sent To You','Notification copy delivered to your inbox — forward to the recipient.');
+      }
+    } else if(emailResult && (emailResult.reason==='not-configured'||emailResult.reason==='no-provider')){
+      st+='ℹ️ Email not auto-sent — no provider configured. Click below to send manually via your email app.\n';
+      st+='  (Quick fix: More → Email Delivery → choose Web3Forms, paste 1 free access key.)\n';
+      toast('info','Email Not Configured','Set up a provider in More → Email Delivery to auto-send. A manual email button is shown below.');
     } else if(emailResult){
-      st+='⚠️ EmailJS send failed: '+emailResult.reason+'\n  You can still send manually via the button below.\n';
+      st+='⚠️ Auto-delivery failed: '+emailResult.reason+'\n  You can still send manually via the button below.\n';
+      st+='  (Tip: Web3Forms needs only 1 key and has no domain restrictions — try it in More → Email Delivery.)\n';
       toast('error','Email Delivery Failed', emailResult.reason);
     }
   } else {
@@ -1645,10 +2417,11 @@ async function sendRecipientNotification({recipient,amount,symbol,from,txHash,ne
   content.appendChild(statusLine);
   preview.classList.remove('hidden');
   const old=document.getElementById('real-mail-btn'); if(old) old.remove();
-  // Show manual mailto button if email provided AND auto-delivery didn't succeed
-  if(email && !(emailResult&&emailResult.ok)){
+  // Show manual mailto button if email provided AND auto-delivery didn't fully reach the recipient
+  if(email && !(emailResult&&emailResult.ok&&emailResult.primary==='emailjs')){
     const mb=document.createElement('button');mb.id='real-mail-btn';mb.className='btn btn-cyan';mb.style.marginTop='12px';mb.textContent='✉️ Send Email Manually (opens email app)';mb.onclick=()=>{window.location.href=emailLink;};preview.appendChild(mb);
   }
+  renderDeliveryLog();
 }
 
 /* ============================================================
@@ -1695,6 +2468,13 @@ try{
     'renderRealTxHistory','exportRealTxCSV','makeEthereumProvider',
     'getEmailJSConfig','saveEmailJSConfig','loadEmailJSConfig','clearEmailJSConfig',
     'saveEmailJSConfigData','sendTestEmail','deliverEmailViaEmailJS','updateEmailJSStatus','diagnoseEmailJS',
+    'getEmailConfig','saveEmailConfigData','deliverEmail','deliverViaWeb3Forms','isEmailConfigured',
+    'toggleProviderFields','getDeliveryLog','addDeliveryRecord','clearDeliveryLog','renderDeliveryLog','escHtml',
+    'getSelectedSendToken','renderSendTokenSelect','onSendTokenChange','detectCustomToken','updateAmountLabel',
+    'renderTokenBalancePreview','getTokenBalance','ethCall','encodeCall','hexToAscii','keccakHex','toUtf8Bytes','keccak256','sendERC20',
+    'loadLivePortfolio','fetchLivePrices',
+    'addSchedJob','getSchedJobs','saveSchedJobs','fmtInterval','buildSchedBody','fireSchedJob',
+    'startSchedTimer','resumeSchedJobs','stopSchedJobs','toggleSchedJob','runSchedJobNow','deleteSchedJob','renderSchedJobs',
     'renderWallets','renderHero','renderStats','renderTokens','renderSimTxs','renderPending',
     'renderAddrBook','renderAddrQuick','renderNotifLog',
     'buildHtmlEmail','buildTextEmail','fillTemplateVars','sendRecipientNotification',
@@ -1706,7 +2486,7 @@ try{
   for(var i=0;i<__expose.length;i++){ try{ if(typeof eval(__expose[i])!=='undefined'){ (typeof window!=='undefined') && (window[__expose[i]]=eval(__expose[i])); } }catch(e){} }
   var __exposeC=['NETWORKS','DEFAULT_TOKENS','TEMPLATE_PRESETS','LOGO_PRESETS','LINK_PRESETS',
    'WALLET_DEEPLINKS','simState','realState','addrBook','notifLog','settings',
-   'notifTemplate','tokenPrices','K'];
+   'notifTemplate','tokenPrices','K','ERC20_TOKENS','ERC20_ABI','COINGECKO_ID_MAP'];
   for(var j=0;j<__exposeC.length;j++){ try{ if(typeof eval(__exposeC[j])!=='undefined'){ (typeof window!=='undefined') && (window[__exposeC[j]]=eval(__exposeC[j])); } }catch(e){} }
   /* Test-only setter for module-scoped currentUser (no-op value in real use). */
   if(typeof window!=='undefined'){ window.__setCurrentUser=function(u){ try{ currentUser=u; }catch(e){}; }; window.__getCurrentUser=function(){ try{ return currentUser; }catch(e){ return null; } }; }

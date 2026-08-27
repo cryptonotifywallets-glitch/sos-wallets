@@ -338,6 +338,17 @@
       </div>
 
       <div class="card">
+        <div class="card-header"><div class="card-title"><span class="icon">📊</span> Live Portfolio Dashboard</div>
+          <button class="btn btn-secondary btn-sm" onclick="loadLivePortfolio()" id="portfolio-refresh-btn">🔄 Refresh</button>
+        </div>
+        <div id="live-portfolio-box">
+          <p style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:14px 0;">
+            Connect your wallet to see live token balances &amp; USD portfolio value across the selected network.
+          </p>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-header"><div class="card-title"><span class="icon">📤</span> Send Real Transaction</div></div>
         <div class="form-group">
           <label>Recipient Wallet Address</label>
@@ -348,7 +359,19 @@
           <div id="real-addr-quick" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;"></div>
         </div>
         <div class="form-group">
-          <label>Amount (native token)</label>
+          <label>Token / Asset</label>
+          <select class="input" id="send-token-select" onchange="onSendTokenChange()"></select>
+          <div id="custom-token-wrap" class="hidden" style="margin-top:8px;">
+            <div class="scan-row">
+              <input class="input" id="custom-token-address" placeholder="0x token contract address">
+              <button class="btn btn-secondary btn-sm" onclick="detectCustomToken()">🔍 Detect</button>
+            </div>
+            <p style="font-size:0.72rem;color:var(--text-muted);margin-top:6px;">Enter any ERC-20 contract address on the current network and click Detect to load its symbol &amp; decimals.</p>
+          </div>
+          <div id="token-balance-preview" class="hidden" style="margin-top:8px;font-size:0.78rem;color:var(--text-muted);background:var(--card-bg-alt,#15192a);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);"></div>
+        </div>
+        <div class="form-group">
+          <label id="real-amount-label">Amount (native token)</label>
           <input class="input" id="real-amount" type="number" min="0" step="0.0001" placeholder="0.0000" oninput="estimateGas()">
           <div id="gas-estimate" class="gas-estimate hidden"></div>
         </div>
@@ -363,7 +386,7 @@
             <div><input class="input" id="notify-webhook" placeholder="Webhook URL (optional)"></div>
           </div>
           <p style="font-size:0.74rem;color:var(--text-muted);margin-top:6px;">
-            Enter the recipient's email to send them a notification. For <strong>automatic email delivery</strong>, set up EmailJS once in <strong>More → 📧 Email Delivery</strong>. Otherwise a "send manually" button appears after each transaction.
+            Enter the recipient's email to send them a notification. For <strong>automatic email delivery</strong>, set up a provider once in <strong>More → 📧 Email Delivery</strong> (Web3Forms is fastest — just 1 free key). Otherwise a "send manually" button appears after each transaction.
           </p>
         </div>
         <button class="btn btn-green btn-full" id="real-send-btn" onclick="realSend()" disabled>🚀 Send &amp; Notify Recipient</button>
@@ -408,6 +431,7 @@
         <button class="sub-tab" id="st-template" onclick="switchSub('template')">🎨 Notification Template</button>
         <button class="sub-tab" id="st-settings" onclick="switchSub('settings')">⚙️ Settings</button>
         <button class="sub-tab" id="st-email" onclick="switchSub('email')">📧 Email Delivery</button>
+        <button class="sub-tab" id="st-sched" onclick="switchSub('sched')">⏰ Scheduler</button>
       </div>
 
       <!-- Address Book -->
@@ -606,81 +630,85 @@
         </div>
       </div>
 
-      <!-- Email Delivery (EmailJS) -->
+      <!-- Email Delivery (Multi-Provider) -->
       <div id="sub-email" class="card hidden">
         <div class="card-header"><div class="card-title"><span class="icon">📧</span> Email Delivery Setup</div></div>
 
         <div class="email-setup-intro">
-          <p><strong>Want recipients to actually receive email notifications?</strong> SOS WALLETS is a client-side app, so it needs a free <strong>EmailJS</strong> account to send real emails. Set it up once and every notification is delivered automatically — no mailto clicks needed.</p>
-          <details class="email-guide" open>
-            <summary>📖 Step-by-step EmailJS setup guide (takes ~5 minutes, free)</summary>
+          <p><strong>Want notifications to actually reach an inbox?</strong> Pick a provider below. <strong>Web3Forms is the fastest</strong> — one free access key, no dashboard, works from any website or localhost. <strong>EmailJS</strong> can send directly to each recipient's address (needs 3 IDs). The app auto-falls back so a notification is never silently lost.</p>
 
-            <p style="margin-top:14px;color:var(--text);font-weight:600;">🔒 First — keep your personal email private</p>
-            <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.6;">
-              The address that appears as the <strong>"From" sender</strong> in recipients' inboxes is whatever email account you connect to EmailJS as a Service. <strong>If you connect your personal Gmail, recipients will see your personal Gmail address.</strong>
-            </p>
-            <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.6;">
-              To keep your personal email private, <strong>create a dedicated/branded sender email</strong> and connect THAT to EmailJS instead. For example:
-            </p>
-            <ul style="color:var(--text-muted);font-size:0.85rem;line-height:1.7;">
-              <li>Create a new free Gmail account like <code>soswallets.notify@gmail.com</code> or <code>yourbrand.alerts@gmail.com</code> and connect that one.</li>
-              <li>Or — best for branding — use a <strong>custom domain</strong> (e.g. <code>notify@yourbrand.com</code>) connected via Gmail (Settings → Accounts → "Send mail as") or via EmailJS's custom SMTP option.</li>
-            </ul>
-            <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.6;">
-              Then set a <strong>Sender Display Name</strong> below (e.g. "SOS WALLETS" or "GlobalPay Notifications") so recipients see a clean branded name in their inbox, not a random address.
-            </p>
+          <!-- Provider selector -->
+          <div class="form-group" style="margin-top:18px">
+            <label class="form-label">Delivery provider</label>
+            <select id="email-provider" class="form-input" onchange="toggleProviderFields()">
+              <option value="none">None — manual email button only</option>
+              <option value="web3forms">⚡ Web3Forms — quickest (1 key, ~1 minute)</option>
+              <option value="emailjs">✉️ EmailJS — sends directly to each recipient</option>
+            </select>
+          </div>
 
-            <p style="margin-top:16px;color:var(--text);font-weight:600;">🌐 Best option — use your own custom domain (e.g. notify@yourbrand.com)</p>
-            <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.6;">
-              If you buy your own domain (~$9–11/yr for a .com at <a href="https://porkbun.com" target="_blank">Porkbun</a>, <a href="https://www.namecheap.com" target="_blank">Namecheap</a>, or <a href="https://www.cloudflare.com/products/registrar/" target="_blank">Cloudflare</a>), you can send from a fully branded address like <code>notify@yourbrand.com</code>. Recipients see your brand, never a Gmail address, and never your personal email. Two ways to do it:
-            </p>
-            <ul style="color:var(--text-muted);font-size:0.85rem;line-height:1.7;">
-              <li><strong>Free route (recommended):</strong> Set up free email forwarding with <a href="https://improvmx.com" target="_blank">ImprovMX</a> (free tier) — it forwards <code>notify@yourbrand.com</code> to a Gmail account you control. Then in Gmail, enable "Send mail as" <code>notify@yourbrand.com</code> (Settings → Accounts → "Add another email address", using ImprovMX's SMTP). Finally connect THAT Gmail to EmailJS. Recipients see <code>notify@yourbrand.com</code>.</li>
-              <li><strong>Direct SMTP route:</strong> In EmailJS, add a service and choose <strong>Custom SMTP</strong> instead of Gmail. Enter your domain's SMTP server + port + username + password (e.g. from ImprovMX SMTP, or any paid mail host like Zoho/Google Workspace). EmailJS sends directly through your domain.</li>
-            </ul>
-            <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.6;">
-              Either way, you still use the same Service ID / Template ID / Public Key / Sender Display Name fields below — nothing in this app changes. A custom domain just makes the "From" address look fully professional and 100% hides your personal email.
-            </p>
+          <!-- Web3Forms fields -->
+          <div id="w3f-fields" class="hidden" style="margin-top:14px">
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:14px">
+              <p style="margin:0 0 10px;color:var(--text);font-size:0.9rem"><strong>⚡ Quickest option — no dashboard, no domain restrictions</strong></p>
+              <ol style="color:var(--text-muted);font-size:0.82rem;line-height:1.7;margin:0;padding-left:18px">
+                <li>Open <a href="https://app.web3forms.com/onboarding/create" target="_blank">app.web3forms.com/onboarding/create</a> and enter <strong>your own email</strong> (this is where notification copies land).</li>
+                <li>You instantly get an <strong>Access Key</strong> (a UUID like <code>a1b2c3d4-…</code>). Copy it.</li>
+                <li>Paste it below + the email you used. Click <strong>Save</strong> then <strong>Send Test Email</strong>.</li>
+              </ol>
+              <p style="margin:10px 0 0;color:var(--text-muted);font-size:0.76rem">ℹ️ Web3Forms delivers to <em>your</em> verified inbox. The app sends a copy of every notification there (with the recipient's address + message embedded) so you can forward it. To send <em>directly</em> to recipients with zero forwarding, use EmailJS instead (or both — the app auto-falls back from EmailJS to Web3Forms).</p>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Web3Forms Access Key</label>
+              <input type="text" id="w3f-access-key" class="form-input" placeholder="your-uuid-access-key">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Your email (where copies arrive) <span style="color:var(--text-muted);font-weight:400;font-size:0.8rem">(optional — sets reply-to)</span></label>
+              <input type="email" id="w3f-owner-email" class="form-input" placeholder="you@example.com">
+            </div>
+          </div>
 
-            <p style="margin-top:18px;color:var(--text);font-weight:600;">📋 Full setup walkthrough</p>
-            <ol>
-              <li><strong>Create your dedicated sender email</strong> first (see above) — e.g. sign up for a fresh Gmail at <a href="https://mail.google.com" target="_blank">mail.google.com</a> and name it something like <code>yourbrand.notify</code>. This is the address recipients will see. Don't use your personal email.</li>
-              <li>Go to <a href="https://dashboard.emailjs.com/sign-up" target="_blank">dashboard.emailjs.com/sign-up</a> and create a <strong>free account</strong> (200 emails/month free, no card needed).</li>
-              <li>In the EmailJS dashboard, click <strong>Email Services → Add New Service</strong>. Choose <strong>Gmail</strong> (or Outlook/Yahoo/Custom SMTP). When prompted, sign in with your <strong>dedicated sender email</strong> (the one from step 1, <em>not</em> your personal email). Click "Create Service" and copy the <strong>Service ID</strong> shown (looks like <code>service_xxxxxxx</code>).</li>
-              <li>Click <strong>Email Templates → Create New Template</strong>. Set these fields exactly:
-                <ul>
-                  <li><strong>To Email:</strong> <code>{to_email}</code></li>
-                  <li><strong>From Name:</strong> <code>{from_name}</code> <span style="color:var(--text-muted)">(so the display name you set below shows up, instead of a raw email address)</span></li>
-                  <li><strong>Subject:</strong> <code>{subject}</code></li>
-                  <li><strong>Content:</strong> Click the <strong>"HTML" toggle</strong> at the top of the content editor, then paste <code>{html}</code> into the body. (If you prefer plain text, use <code>{message}</code> instead.)</li>
-                </ul>
-                Scroll down and click <strong>Save</strong>. Copy the <strong>Template ID</strong> (looks like <code>template_xxxxxxx</code>).</li>
-              <li>On the left sidebar click <strong>Account</strong>, then scroll to <strong>API Keys</strong>. Copy your <strong>Public Key</strong> (looks like <code>user_xxxxxxxxxxxxx</code> or a long alphanumeric string).</li>
-              <li>Back here in SOS WALLETS: paste all three IDs below, type a <strong>Sender Display Name</strong> (e.g. <code>SOS WALLETS</code>), and click <strong>Save</strong>.</li>
-              <li>Enter your own email in the "Test email recipient" field and click <strong>Send Test Email</strong>. Check your inbox (and spam folder). You should see it arrive <em>from your dedicated sender email</em> with the display name you chose.</li>
-            </ol>
-            <p style="color:var(--text-muted);font-size:0.8rem;">🔒 Your keys + display name are stored only in your browser (localStorage). EmailJS public keys are safe to use client-side — that's how they're designed to work. Never paste your private/secret key here — EmailJS only needs the public one.</p>
-          </details>
-        </div>
+          <!-- EmailJS fields -->
+          <div id="emailjs-fields" class="hidden" style="margin-top:14px">
+            <details class="email-guide">
+              <summary>📖 Step-by-step EmailJS setup guide (sends directly to recipients)</summary>
+              <p style="margin-top:14px;color:var(--text);font-weight:600">🔒 Keep your personal email private</p>
+              <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.6">The "From" address recipients see is whatever email you connect as an EmailJS Service. Create a <strong>dedicated sender email</strong> (e.g. <code>soswallets.notify@gmail.com</code>) or use a custom domain for full branding.</p>
+              <p style="margin-top:16px;color:var(--text);font-weight:600">📋 Walkthrough</p>
+              <ol style="color:var(--text-muted);font-size:0.85rem;line-height:1.7">
+                <li>Create a free account at <a href="https://dashboard.emailjs.com/sign-up" target="_blank">dashboard.emailjs.com/sign-up</a> (200 emails/month free).</li>
+                <li><strong>Email Services → Add New Service</strong> → choose Gmail → sign in with your dedicated sender email → copy the <strong>Service ID</strong> (<code>service_xxx</code>).</li>
+                <li><strong>Email Templates → Create New Template</strong> → set To Email: <code>{{to_email}}</code>, From Name: <code>{{from_name}}</code>, Subject: <code>{{subject}}</code>, Content (HTML toggle): <code>{{html}}</code> → save → copy <strong>Template ID</strong> (<code>template_xxx</code>).</li>
+                <li><strong>Account → API Keys</strong> → copy your <strong>Public Key</strong>.</li>
+                <li>⚠️ <strong>Important:</strong> Account → Security → if "Allowed Domains" is on, add this site's origin (<code id="w3-origin-hint"></code>) or enable "Allow API access outside browser". Otherwise EmailJS returns 403.</li>
+                <li>Paste all three IDs below → Save → Send Test Email.</li>
+              </ol>
+            </details>
+            <div class="form-group" style="margin-top:14px">
+              <label class="form-label">EmailJS Service ID</label>
+              <input type="text" id="emailjs-service" class="form-input" placeholder="service_xxxxxxx">
+            </div>
+            <div class="form-group">
+              <label class="form-label">EmailJS Template ID</label>
+              <input type="text" id="emailjs-template" class="form-input" placeholder="template_xxxxxxx">
+            </div>
+            <div class="form-group">
+              <label class="form-label">EmailJS Public Key</label>
+              <input type="text" id="emailjs-publickey" class="form-input" placeholder="user_xxxxxxxxxxxxx">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Sender Display Name <span style="color:var(--text-muted);font-weight:400;font-size:0.8rem">(what recipients see as the "from" name)</span></label>
+              <input type="text" id="emailjs-fromname" class="form-input" placeholder="SOS WALLETS" maxlength="60">
+            </div>
+          </div>
 
-        <div class="email-form">
-          <div class="form-group">
-            <label class="form-label">EmailJS Service ID</label>
-            <input type="text" id="emailjs-service" class="form-input" placeholder="service_xxxxxxx">
+          <!-- None selected box -->
+          <div id="email-none-box" class="hidden" style="margin-top:14px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.4);border-radius:10px;padding:14px 16px">
+            <p style="margin:0;color:var(--text);font-size:0.85rem">No automatic delivery is configured. After each transaction you'll get a <strong>manual "Send Email"</strong> button (opens your email app pre-filled). Choose Web3Forms above for instant automatic delivery with just one key.</p>
           </div>
-          <div class="form-group">
-            <label class="form-label">EmailJS Template ID</label>
-            <input type="text" id="emailjs-template" class="form-input" placeholder="template_xxxxxxx">
-          </div>
-          <div class="form-group">
-            <label class="form-label">EmailJS Public Key</label>
-            <input type="text" id="emailjs-publickey" class="form-input" placeholder="user_xxxxxxxxxxxxx">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Sender Display Name <span style="color:var(--text-muted);font-weight:400;font-size:0.8rem;">(what recipients see as the "from" name — e.g. SOS WALLETS)</span></label>
-            <input type="text" id="emailjs-fromname" class="form-input" placeholder="SOS WALLETS" maxlength="60">
-          </div>
-          <div class="form-group">
+
+          <!-- Shared fields: test recipient + actions -->
+          <div class="form-group" style="margin-top:14px">
             <label class="form-label">Test email recipient (your own email)</label>
             <input type="email" id="emailjs-test-to" class="form-input" placeholder="you@example.com">
           </div>
@@ -697,9 +725,75 @@
         <div class="settings-row">
           <div>
             <div class="sr-label">Current status</div>
-            <div class="sr-desc" id="emailjs-config-status">Not configured — notifications will show a preview + mailto link only.</div>
+            <div class="sr-desc" id="emailjs-config-status">Not configured — notifications will show a preview + a manual email button.</div>
           </div>
         </div>
+
+        <!-- Delivery log -->
+        <div class="section-divider"></div>
+        <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div class="sr-label">📜 Notification Delivery Log</div>
+              <div class="sr-desc">See exactly what happened to each notification — provider used, status, and time.</div>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="clearDeliveryLog()">Clear</button>
+          </div>
+          <div id="delivery-log" style="margin-top:6px"></div>
+        </div>
+      </div>
+
+      <!-- Recurring Notification Scheduler -->
+      <div id="sub-sched" class="card hidden">
+        <div class="card-header"><div class="card-title"><span class="icon">⏰</span> Recurring Notification Scheduler</div></div>
+        <div class="email-setup-intro">
+          <p>Set up <strong>automatic, recurring email notifications</strong> that fire on a timer while the app is open — daily portfolio summaries, weekly transaction digests, payment reminders, or custom recurring alerts. Each job uses your configured email provider from the <strong>Email Delivery</strong> tab. Jobs persist across reloads and resume when you log back in.</p>
+        </div>
+        <div class="form-group" style="margin-top:14px">
+          <label>Job Name</label>
+          <input class="input" id="sched-name" placeholder="e.g. Daily Portfolio Summary">
+        </div>
+        <div class="grid-2" style="gap:12px;">
+          <div class="form-group">
+            <label>Repeat Every</label>
+            <select class="input" id="sched-interval">
+              <option value="60000">1 minute (testing)</option>
+              <option value="3600000" selected>1 hour</option>
+              <option value="21600000">6 hours</option>
+              <option value="43200000">12 hours</option>
+              <option value="86400000">24 hours (daily)</option>
+              <option value="604800000">7 days (weekly)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Send To (email)</label>
+            <input class="input" id="sched-email" type="email" placeholder="recipient@example.com">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Message / Subject</label>
+          <input class="input" id="sched-subject" placeholder="e.g. Your daily SOS Wallets portfolio update">
+        </div>
+        <div class="form-group">
+          <label>Body (what to include)</label>
+          <select class="input" id="sched-body-type">
+            <option value="custom">Custom message (typed below)</option>
+            <option value="portfolio">Live portfolio summary (balances + USD value)</option>
+            <option value="txdigest">Recent transaction digest (last 24h)</option>
+            <option value="reminder">Payment reminder (custom text)</option>
+          </select>
+          <textarea class="input" id="sched-body" rows="3" placeholder="Custom message body (used when 'Custom message' is selected)" style="margin-top:8px;resize:vertical;font-family:inherit;"></textarea>
+        </div>
+        <button class="btn btn-green btn-full" onclick="addSchedJob()">➕ Add Scheduled Job</button>
+        <div class="section-divider"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div style="font-weight:600;font-size:0.9rem;">📋 Active Scheduled Jobs</div>
+          <button class="btn btn-secondary btn-sm" onclick="renderSchedJobs()">🔄 Refresh</button>
+        </div>
+        <div id="sched-jobs-list"></div>
+        <p style="font-size:0.72rem;color:var(--text-muted);margin-top:10px;line-height:1.5;">
+          <strong>Note:</strong> Recurring jobs run via in-browser timers, so they fire only while the SOS WALLETS tab is open. When you return, missed jobs are detected and fired once on resume. Configure an email provider in the <strong>Email Delivery</strong> tab first so notifications actually reach an inbox.
+        </p>
       </div>
     </div>
 
