@@ -1,14 +1,32 @@
-# SOS WALLETS — Selectable Notification Channels + SMS Support
+# SOS WALLETS — PIN-only login + WebAuthn biometric + push to GitHub
 
 ## Goal
-Make ALL notification channels selectable so the admin can choose any combination of: Email, SMS, Webhook. SMS works via email-to-SMS carrier gateways (using existing SMTP setup — free). EmailJS cannot send SMS directly, but SMTP can send SMS through carrier gateways.
+Replace email+username login with a single PIN/password field (no username, no email) for both the frontend app and the admin dashboard, and add WebAuthn biometric support (Touch ID / Face ID / Windows Hello / Android fingerprint). Then push everything to GitHub.
 
 ## Implementation
-- [x] Add notification channel selector UI in Send & Notify tab (Email ☑, SMS ☑, Webhook ☑ checkboxes)
-- [x] Add phone number input + carrier gateway dropdown (AT&T, T-Mobile, Verizon, Sprint, Boost, Cricket, Google Fi, MetroPCS, US Cellular, custom)
-- [x] Add SMS helper function — converts phone+carrier to gateway email address, sends via SMTP
-- [x] Update `sendRecipientNotification` to iterate over ALL selected channels and send via each
-- [x] Update `realSend()` and `notifyOnly()` to pass SMS params and selected channels
-- [x] Add SMS info note explaining how it works (SMTP → carrier gateway → SMS)
-- [x] Test locally
-- [x] Commit + push to GitHub (auto-deploys to Railway)
+- [x] Backend: POST /api/auth/pin-login (PIN-only, finds admin by is_admin=1, bcrypt verify, issues JWT)
+- [x] Backend: GET /api/auth/biometric/status (checks webauthn_cred in app_data)
+- [x] Backend: POST /api/auth/biometric/register/begin + /finish (adminAuth, challenge flow)
+- [x] Backend: POST /api/auth/biometric/login/begin + /finish (ES256 + RS256 verify via Node crypto)
+- [x] Backend: DELETE /api/auth/biometric (adminAuth, removes credential)
+- [x] Backend: helper functions b64urlToBuf, bufToB64url, rpConfig, setChallenge/takeChallenge (5-min TTL)
+- [x] Frontend app (index.html): PIN-only login form + Create/Change PIN setup form + biometric button
+- [x] Frontend app (app.js): switchLoginTab, doRegister (PIN), doLogin (PIN-only), getAccount, biometric functions
+- [x] Frontend app: biometric settings row (enroll/remove) + K.biometric storage
+- [x] Admin dashboard (admin.html): PIN-only login screen (single password field) + biometric button + status box
+- [x] Admin dashboard: biometric management card in Settings tab (enroll/remove/status)
+- [x] Admin dashboard: login JS calls POST /api/auth/pin-login with {pin}
+- [x] Syntax check: node --check server.js + app.js (PASS)
+- [x] Test: backend boots, health check OK, Resend configured
+- [x] Test: /api/auth/pin-login returns valid JWT with PIN
+- [x] Test: biometric/status, register/begin, login/begin respond correctly
+- [x] Commit: 5769f65 "feat: PIN/password-only login + WebAuthn biometric support"
+- [ ] Push to GitHub (awaiting authentication)
+- [ ] Verify public URL serves updated PIN login page
+
+## Notes
+- .env is gitignored and NOT tracked — secrets (Resend key, JWT secret, admin pass) are safe
+- ADMIN_PASS is used as the PIN (SOSwallets2024)
+- Resend integration already complete from prior task (free tier: 100/day, 3000/month)
+- Web3Forms set up as alternative free provider
+- The exposed GitHub token (ghp_...) was revoked per user warning — do NOT reuse
