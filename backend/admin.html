@@ -479,6 +479,16 @@
           <label>Footer</label>
           <input id="tmplFooter" placeholder="This is an automated notification. Do not reply.">
         </div>
+        <div class="field">
+          <label>Status Text — Notify Only (no funds sent)</label>
+          <input id="tmplStatusAlert" placeholder="Alert only — no on-chain transaction has been broadcast yet.">
+          <div style="font-size:12px;color:var(--muted);margin-top:4px;">This shows in the email when you use "Notify Recipient Only" mode.</div>
+        </div>
+        <div class="field">
+          <label>Status Text — Real Send (funds sent)</label>
+          <input id="tmplStatusPending" placeholder="Pending — awaiting on-chain confirmation">
+          <div style="font-size:12px;color:var(--muted);margin-top:4px;">This shows in the email when you send a real on-chain transaction.</div>
+        </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
           <button class="btn btn-success" onclick="saveTemplate()">💾 Save Template</button>
           <button class="btn btn-cyan" onclick="previewTemplate()">👁️ Live Preview</button>
@@ -812,13 +822,13 @@ const LINK_PRESETS = {
 };
 
 const TEMPLATE_PRESETS = [
-  { id:'default', name:'🎛️ Default', icon:'🎛️', sender:'SOS WALLETS', logo:'', color:'#0066ff', subject:'🔔 Incoming Deposit: {amount} {symbol} is on the way', greeting:'Hello,', intro:'A deposit is incoming to your wallet.', btnLabel:'Track Transaction', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'This is an automated notification. Do not reply to this email.' },
-  { id:'bank', name:'🏦 Bank-Style', icon:'🏦', sender:'GlobalPay Banking', logo:'bank', color:'#0a4d2e', subject:'Deposit Confirmation — {amount} {symbol} Incoming', greeting:'Dear Valued Customer,', intro:'We are notifying you of an incoming deposit to your account. Please review the transaction details below.', btnLabel:'View Transaction Details', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'This is an automated message from GlobalPay Banking. Please do not reply.' },
-  { id:'crypto', name:'₿ Crypto Exchange', icon:'₿', sender:'CryptoNotify', logo:'crypto', color:'#f7931a', subject:'⚡ {amount} {symbol} Deposit Incoming — CryptoNotify', greeting:'Hey there 👋', intro:"You've got an incoming deposit! Here are the details:", btnLabel:'Track on Blockchain', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'CryptoNotify — Real-time deposit alerts.' },
-  { id:'fintech', name:'💳 Fintech / Modern', icon:'💳', sender:'PayFlow', logo:'bolt', color:'#6c5ce7', subject:'💵 You\'re receiving {amount} {symbol}', greeting:'Hi there,', intro:"Someone is sending you a deposit. Here's everything you need to know.", btnLabel:'See Deposit Details', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'Sent with care by PayFlow.' },
-  { id:'secure', name:'🛡️ Security Alert', icon:'🛡️', sender:'SecureWallet Alert', logo:'shield', color:'#1e3a5f', subject:'⚠️ Incoming Transfer Alert: {amount} {symbol}', greeting:'Hello,', intro:'A transfer is incoming to your secured wallet. Please verify the details below.', btnLabel:'Verify Transaction', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'SecureWallet — Keeping your assets safe.' },
-  { id:'personal', name:'👤 Personal / Casual', icon:'👤', sender:'', logo:'', color:'#0066ff', subject:'Sending you {amount} {symbol} 💸', greeting:'Hey!', intro:'Just letting you know I\'m sending you a deposit. Should arrive soon!', btnLabel:'Check It Out', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'' },
-  { id:'minimal', name:'✨ Minimal', icon:'✨', sender:'', logo:'', color:'#333333', subject:'Incoming: {amount} {symbol}', greeting:'', intro:'A deposit is incoming.', btnLabel:'View', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'' },
+  { id:'default', name:'🎛️ Default', icon:'🎛️', sender:'SOS WALLETS', logo:'', color:'#0066ff', subject:'🔔 Incoming Deposit: {amount} {symbol} is on the way', greeting:'Hello,', intro:'A deposit is incoming to your wallet.', btnLabel:'Track Transaction', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'This is an automated notification. Do not reply to this email.', statusAlert:'Alert only — no on-chain transaction has been broadcast yet.', statusPending:'Pending — awaiting on-chain confirmation' },
+  { id:'bank', name:'🏦 Bank-Style', icon:'🏦', sender:'GlobalPay Banking', logo:'bank', color:'#0a4d2e', subject:'Deposit Confirmation — {amount} {symbol} Incoming', greeting:'Dear Valued Customer,', intro:'We are notifying you of an incoming deposit to your account. Please review the transaction details below.', btnLabel:'View Transaction Details', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'This is an automated message from GlobalPay Banking. Please do not reply.', statusAlert:'Pre-advice — deposit in transit, awaiting network broadcast.', statusPending:'Confirmed — transaction broadcast to network' },
+  { id:'crypto', name:'₿ Crypto Exchange', icon:'₿', sender:'CryptoNotify', logo:'crypto', color:'#f7931a', subject:'⚡ {amount} {symbol} Deposit Incoming — CryptoNotify', greeting:'Hey there 👋', intro:"You've got an incoming deposit! Here are the details:", btnLabel:'Track on Blockchain', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'CryptoNotify — Real-time deposit alerts.', statusAlert:'⚡ Alert — transaction not yet broadcast to blockchain', statusPending:'⏳ Pending — awaiting block confirmation' },
+  { id:'fintech', name:'💳 Fintech / Modern', icon:'💳', sender:'PayFlow', logo:'bolt', color:'#6c5ce7', subject:'💵 You\'re receiving {amount} {symbol}', greeting:'Hi there,', intro:"Someone is sending you a deposit. Here's everything you need to know.", btnLabel:'See Deposit Details', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'Sent with care by PayFlow.', statusAlert:'Heads up — deposit notification sent, tx pending broadcast.', statusPending:'In transit — transaction submitted to network' },
+  { id:'secure', name:'🛡️ Security Alert', icon:'🛡️', sender:'SecureWallet Alert', logo:'shield', color:'#1e3a5f', subject:'⚠️ Incoming Transfer Alert: {amount} {symbol}', greeting:'Hello,', intro:'A transfer is incoming to your secured wallet. Please verify the details below.', btnLabel:'Verify Transaction', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'SecureWallet — Keeping your assets safe.', statusAlert:'⚠️ Security alert — transfer notification, no on-chain tx yet.', statusPending:'🔒 Pending — transfer submitted, awaiting confirmation' },
+  { id:'personal', name:'👤 Personal / Casual', icon:'👤', sender:'', logo:'', color:'#0066ff', subject:'Sending you {amount} {symbol} 💸', greeting:'Hey!', intro:'Just letting you know I\'m sending you a deposit. Should arrive soon!', btnLabel:'Check It Out', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'', statusAlert:'Heads up — sending you a heads up, tx not sent yet!', statusPending:'On its way — transaction submitted!' },
+  { id:'minimal', name:'✨ Minimal', icon:'✨', sender:'', logo:'', color:'#333333', subject:'Incoming: {amount} {symbol}', greeting:'', intro:'A deposit is incoming.', btnLabel:'View', btnUrl:'https://etherscan.io/tx/{txHash}', footer:'', statusAlert:'Alert — pending broadcast', statusPending:'Pending — awaiting confirmation' },
 ];
 
 /* ---------- State (persisted to server) ---------- */
@@ -1358,7 +1368,7 @@ function buildHtmlEmail(tpl, vars){
   const color=tpl.color||'#0066ff';
   const btnLabel=fillVars(tpl.btnLabel,vars);
   const btnUrl=fillVars(tpl.btnUrl,vars);
-  const statusLine=vars.notifyOnly?'Alert only — no on-chain transaction has been broadcast yet.':'Pending — awaiting on-chain confirmation';
+  const statusLine=fillVars(vars.notifyOnly?(tpl.statusAlert||'Alert only — no on-chain transaction has been broadcast yet.'):(tpl.statusPending||'Pending — awaiting on-chain confirmation'),vars);
   let logoHtml='';
   if(tpl.logo && tpl.logo.startsWith('http')) logoHtml=`<img src="${tpl.logo}" style="height:40px;max-width:160px;object-fit:contain;" alt="logo">`;
   else if(LOGO_PRESETS[tpl.logo]) logoHtml=`<span style="font-size:32px;">${LOGO_PRESETS[tpl.logo]}</span>`;
@@ -1397,7 +1407,7 @@ function buildTextEmail(tpl, vars){
   const greeting=fillVars(tpl.greeting,vars);
   const intro=fillVars(tpl.intro,vars);
   const footer=fillVars(tpl.footer,vars);
-  const statusLine=vars.notifyOnly?'Alert only — no on-chain tx yet.':'Pending — awaiting confirmation';
+  const statusLine=fillVars(vars.notifyOnly?(tpl.statusAlert||'Alert only — no on-chain tx yet.'):(tpl.statusPending||'Pending — awaiting confirmation'),vars);
   let text='';
   if(greeting) text+=greeting+'\n\n';
   text+=intro+'\n\n';
@@ -1638,6 +1648,7 @@ function populateTemplateForm(){
   set('tmplSender',t.sender); set('tmplLogo',t.logo); set('tmplColor',t.color);
   set('tmplSubject',t.subject); set('tmplGreeting',t.greeting); set('tmplIntro',t.intro);
   set('tmplBtnLabel',t.btnLabel); set('tmplBtnUrl',t.btnUrl); set('tmplFooter',t.footer);
+  set('tmplStatusAlert',t.statusAlert); set('tmplStatusPending',t.statusPending);
   renderLogoPreview();
 }
 
@@ -1671,7 +1682,8 @@ window.saveTemplate = async function(){
   appData.notif_template = {
     sender:get('tmplSender'), logo:get('tmplLogo'), color:get('tmplColor')||'#0066ff',
     subject:get('tmplSubject'), greeting:get('tmplGreeting'), intro:get('tmplIntro'),
-    btnLabel:get('tmplBtnLabel'), btnUrl:get('tmplBtnUrl'), footer:get('tmplFooter')
+    btnLabel:get('tmplBtnLabel'), btnUrl:get('tmplBtnUrl'), footer:get('tmplFooter'),
+    statusAlert:get('tmplStatusAlert'), statusPending:get('tmplStatusPending')
   };
   await saveKey('notif_template', appData.notif_template);
   toast('success','Template Saved','Your notification template is now active');
@@ -1689,7 +1701,7 @@ window.resetTemplate = function(){
 
 window.previewTemplate = function(){
   const get=id=>{ const el=document.getElementById(id); return el?el.value.trim():''; };
-  const t = { sender:get('tmplSender'), logo:get('tmplLogo'), color:get('tmplColor')||'#0066ff', subject:get('tmplSubject'), greeting:get('tmplGreeting'), intro:get('tmplIntro'), btnLabel:get('tmplBtnLabel'), btnUrl:get('tmplBtnUrl'), footer:get('tmplFooter') };
+  const t = { sender:get('tmplSender'), logo:get('tmplLogo'), color:get('tmplColor')||'#0066ff', subject:get('tmplSubject'), greeting:get('tmplGreeting'), intro:get('tmplIntro'), btnLabel:get('tmplBtnLabel'), btnUrl:get('tmplBtnUrl'), footer:get('tmplFooter'), statusAlert:get('tmplStatusAlert'), statusPending:get('tmplStatusPending') };
   const vars = { amount:'0.5', symbol:'ETH', from:'0x742d35Cc6634C0532925a3b844Bc9e7595f0b51b', recipient:'0xAbC1234567890defGhi456', network:'Ethereum Mainnet', memo:'Payment for Invoice #1234', txHash:'0xa1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890', time:nowStr(), sender:t.sender, notifyOnly:false };
   const html = buildHtmlEmail(t, vars);
   const content = document.getElementById('previewContent');
