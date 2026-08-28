@@ -381,18 +381,61 @@
           <label>Memo (optional)</label>
           <input id="realMemo" placeholder="e.g. Invoice #1234">
         </div>
-        <div class="grid-2">
-          <div class="field">
-            <label>Recipient Email (for notification)</label>
-            <input id="notifyEmail" type="email" placeholder="recipient@example.com">
-          </div>
-          <div class="field">
-            <label>Webhook URL (optional)</label>
-            <input id="notifyWebhook" placeholder="https://...">
+        <div class="field" style="margin-top:14px;">
+          <label>Notification Channels — select any combination</label>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:6px;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;">
+              <input type="checkbox" id="chanEmail" checked onchange="toggleChannelFields()"> 📧 Email
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;">
+              <input type="checkbox" id="chanSms" onchange="toggleChannelFields()"> 📱 SMS
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;">
+              <input type="checkbox" id="chanWebhook" onchange="toggleChannelFields()"> 🔗 Webhook
+            </label>
           </div>
         </div>
+
+        <div id="emailChannelField" class="field" style="margin-top:10px;">
+          <label>Recipient Email</label>
+          <input id="notifyEmail" type="email" placeholder="recipient@example.com">
+        </div>
+
+        <div id="smsChannelField" class="field hidden" style="margin-top:10px;">
+          <label>Recipient Phone (SMS via email-to-SMS gateway — uses your SMTP setup)</label>
+          <div class="grid-2">
+            <input id="notifyPhone" type="tel" placeholder="e.g. 5551234567 (digits only)">
+            <select id="notifyCarrier">
+              <option value="">— Select carrier —</option>
+              <option value="txt.att.net">AT&amp;T</option>
+              <option value="tmomail.net">T-Mobile</option>
+              <option value="vtext.com">Verizon</option>
+              <option value="messaging.sprintpcs.com">Sprint</option>
+              <option value="sms.myboostmobile.com">Boost Mobile</option>
+              <option value="sms.cricketwireless.com">Cricket</option>
+              <option value="msg.fi.google.com">Google Fi</option>
+              <option value="mymetropcs.com">MetroPCS</option>
+              <option value="email.uscc.net">US Cellular</option>
+              <option value="vmobl.com">Virgin Mobile</option>
+              <option value="message.alltel.com">Alltel</option>
+              <option value="custom">Custom gateway…</option>
+            </select>
+          </div>
+          <input id="notifyCarrierCustom" class="hidden" style="margin-top:8px;" placeholder="e.g. customcarrier.com (gateway domain)">
+          <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">
+            ℹ️ SMS is sent through your SMTP email provider to the carrier's email-to-SMS gateway (e.g. 5551234567@txt.att.net), which converts it to an SMS text. This is free but requires SMTP to be configured in Email Delivery. Some carriers may discontinue or throttle these gateways. EmailJS alone <strong>cannot</strong> send SMS — only SMTP can.
+          </div>
+        </div>
+
+        <div id="webhookChannelField" class="field hidden" style="margin-top:10px;">
+          <label>Webhook URL</label>
+          <input id="notifyWebhook" placeholder="https://your-endpoint.com/webhook">
+        </div>
+
         <button class="btn btn-success btn-block" id="realSendBtn" onclick="realSend()" disabled>🚀 Send &amp; Notify Recipient</button>
-        <button class="btn btn-cyan btn-block" id="notifyOnlyBtn" onclick="notifyOnly()" style="margin-top:10px;">🔔 Notify Recipient Only (No Funds Needed)</button>
+        <button class="btn btn-cyan btn-block" id="notifyOnlyBtn" onclick="notifyOnly()" style="margin-top:10px;">
+          🔔 Notify Recipient Only (No Funds Needed)
+        </button>
 
         <div class="notify-preview hidden" id="realNotifyPreview" style="margin-top:14px;">
           <div class="np-label" id="notifyLabel">🔔 Notification Preview</div>
@@ -1422,6 +1465,53 @@ function buildTextEmail(tpl, vars){
 }
 
 /* Send notification email via server (SMTP) or client-side providers */
+/* Toggle visibility of channel fields based on checkbox selection */
+window.toggleChannelFields = function(){
+  const emailOn = document.getElementById('chanEmail').checked;
+  const smsOn = document.getElementById('chanSms').checked;
+  const webhookOn = document.getElementById('chanWebhook').checked;
+  const ef = document.getElementById('emailChannelField');
+  const sf = document.getElementById('smsChannelField');
+  const wf = document.getElementById('webhookChannelField');
+  if(ef) ef.classList.toggle('hidden', !emailOn);
+  if(sf) sf.classList.toggle('hidden', !smsOn);
+  if(wf) wf.classList.toggle('hidden', !webhookOn);
+};
+
+/* Show/hide custom carrier gateway input when "Custom" is selected */
+document.addEventListener('DOMContentLoaded', function(){
+  const sel = document.getElementById('notifyCarrier');
+  if(sel){
+    sel.addEventListener('change', function(){
+      const custom = document.getElementById('notifyCarrierCustom');
+      if(custom) custom.classList.toggle('hidden', sel.value !== 'custom');
+    });
+  }
+});
+
+/* Build the SMS gateway email address from phone + carrier */
+function buildSmsGatewayAddress(phone, carrier, customGateway){
+  const cleanPhone = (phone||'').replace(/\D/g, '');
+  if(!cleanPhone) return null;
+  let gateway = carrier;
+  if(carrier === 'custom') gateway = (customGateway||'').trim().replace(/^@/, '');
+  if(!gateway) return null;
+  return cleanPhone + '@' + gateway;
+}
+
+/* Send SMS via email-to-SMS carrier gateway — uses server SMTP endpoint.
+   SMS gateways typically only accept plain text, so we send a concise text version. */
+async function sendSmsNotification(gatewayAddr, subject, textBody){
+  let smsText = textBody || subject;
+  if(smsText.length > 900) smsText = smsText.substring(0, 897) + '...';
+  try {
+    const res = await api('/email/send', { method:'POST', body: JSON.stringify({ to:gatewayAddr, subject:'SMS Notification', html:smsText, text:smsText }) });
+    return { ok:true, provider:'smtp-sms', detail:'SMS sent via '+gatewayAddr };
+  } catch(e) {
+    return { ok:false, reason:'SMS (SMTP) failed: '+e.message };
+  }
+}
+
 async function sendNotificationEmail(toEmail, subject, textBody, htmlBody){
   const cfg = appData.email_config || {};
   // 1) If SMTP is the configured provider, use server endpoint
@@ -1483,39 +1573,65 @@ async function sendNotificationEmail(toEmail, subject, textBody, htmlBody){
 }
 
 /* The main recipient notification function */
-async function sendRecipientNotification({recipient, amount, symbol, from, txHash, network, memo, email, webhook, notifyOnly}){
+async function sendRecipientNotification({recipient, amount, symbol, from, txHash, network, memo, email, webhook, notifyOnly, phone, carrier, carrierCustom, channels}){
   const tpl = getTemplate();
   const vars = { amount, symbol, from, recipient, network, memo:memo||'(none)', txHash, time:nowStr(), sender:tpl.sender, notifyOnly:!!notifyOnly };
   const subject = fillVars(tpl.subject, vars);
   const textBody = buildTextEmail(tpl, vars);
   const htmlBody = buildHtmlEmail(tpl, vars);
 
-  // Show preview — but mark as "sending" until we confirm the email result
+  // Determine which channels are active
+  const ch = channels || {};
+  const wantEmail = ch.email !== false && email;   // email on by default
+  const wantSms = ch.sms === true && phone && carrier;
+  const wantWebhook = ch.webhook === true && webhook;
+  const smsAddr = wantSms ? buildSmsGatewayAddress(phone, carrier, carrierCustom) : null;
+
+  // Show preview — but mark as "sending" until we confirm results
   const preview = document.getElementById('realNotifyPreview');
   const content = document.getElementById('notifyContent');
   const label = document.getElementById('notifyLabel');
   preview.classList.remove('hidden');
-  if(label) label.textContent = notifyOnly ? '⏳ Sending notification (Notify-Only — no on-chain tx)…' : '⏳ Sending notification to recipient…';
+  const channelsList = [wantEmail?'Email':null, wantSms?('SMS to '+smsAddr):null, wantWebhook?'Webhook':null].filter(Boolean).join(' + ') || 'Preview only (no channels selected)';
+  if(label) label.textContent = (notifyOnly ? '⏳ Notify-Only — sending via: ' : '⏳ Sending via: ') + channelsList + '…';
   content.innerHTML = '<iframe srcdoc="'+htmlBody.replace(/"/g,'&quot;')+'" style="width:100%;height:350px;border:1px solid var(--border);border-radius:8px;background:#fff;"></iframe>';
 
   let statusText = 'Subject: '+subject+'\n\n';
-  let emailOk = false;
-  // Webhook
-  if(webhook){ try { await fetch(webhook,{method:'POST',headers:{'Content-Type':'application/json'},mode:'no-cors',body:JSON.stringify({event:notifyOnly?'alert':'incoming_deposit',recipient,amount,symbol,from,txHash,network,memo})}); statusText+='✅ Webhook dispatched\n'; } catch(e){ statusText+='⚠️ Webhook failed\n'; } }
+  let anyOk = false;
+  let anyAttempted = false;
 
-  // Email
-  if(email){
-    const result = await sendNotificationEmail(email, subject, textBody, htmlBody);
-    if(result.ok){ statusText+='✅ Email sent via '+result.provider+'\n'; emailOk = true; toast('success','Email Sent','Delivered to '+email+' via '+result.provider); }
-    else { statusText+='⚠️ Email failed: '+result.reason+'\n'; toast('error','Email Failed', result.reason); }
-  } else {
-    statusText+='ℹ️ No recipient email — preview only\n';
+  // 1) Webhook
+  if(wantWebhook){
+    anyAttempted = true;
+    try { await fetch(webhook,{method:'POST',headers:{'Content-Type':'application/json'},mode:'no-cors',body:JSON.stringify({event:notifyOnly?'alert':'incoming_deposit',recipient,amount,symbol,from,txHash,network,memo})}); statusText+='✅ Webhook dispatched\n'; anyOk = true; }
+    catch(e){ statusText+='⚠️ Webhook failed: '+e.message+'\n'; }
   }
-  // Update label based on actual email result
+
+  // 2) Email
+  if(wantEmail){
+    anyAttempted = true;
+    const result = await sendNotificationEmail(email, subject, textBody, htmlBody);
+    if(result.ok){ statusText+='✅ Email sent via '+result.provider+'\n'; anyOk = true; toast('success','Email Sent','Delivered to '+email+' via '+result.provider); }
+    else { statusText+='⚠️ Email failed: '+result.reason+'\n'; toast('error','Email Failed', result.reason); }
+  }
+
+  // 3) SMS (via email-to-SMS carrier gateway through SMTP)
+  if(wantSms && smsAddr){
+    anyAttempted = true;
+    const smsResult = await sendSmsNotification(smsAddr, subject, textBody);
+    if(smsResult.ok){ statusText+='✅ SMS sent to '+phone+' via '+carrier+'\n'; anyOk = true; toast('success','SMS Sent','Delivered to '+phone+' via '+carrier); }
+    else { statusText+='⚠️ SMS failed: '+smsResult.reason+'\n'; toast('error','SMS Failed', smsResult.reason); }
+  } else if(ch.sms === true && (!phone || !carrier)){
+    statusText+='⚠️ SMS skipped — phone number or carrier not set\n';
+  }
+
+  if(!anyAttempted) statusText+='ℹ️ No notification channels selected — preview only\n';
+
+  // Update label based on results
   if(label){
-    if(emailOk) label.textContent = notifyOnly ? '✅ Notification Sent (Notify-Only — email delivered)' : '✅ Notification Sent — email delivered to recipient';
-    else if(email && !emailOk) label.textContent = '❌ Email delivery failed — see details below';
-    else label.textContent = notifyOnly ? '🔔 Notification Preview (no email — recipient address not set)' : '🔔 Notification Preview';
+    if(anyOk) label.textContent = notifyOnly ? '✅ Notification Sent (Notify-Only)' : '✅ Notification Sent';
+    else if(anyAttempted) label.textContent = '❌ All channels failed — see details below';
+    else label.textContent = notifyOnly ? '🔔 Notification Preview (no channels selected)' : '🔔 Notification Preview';
   }
   const statusDiv = document.createElement('div');
   statusDiv.style.cssText = 'font-size:12px;color:var(--muted);margin-top:10px;white-space:pre-line;line-height:1.6;';
@@ -1530,6 +1646,10 @@ window.realSend = async function(){
   const memo = document.getElementById('realMemo').value.trim();
   const email = document.getElementById('notifyEmail').value.trim();
   const webhook = document.getElementById('notifyWebhook').value.trim();
+  const phone = document.getElementById('notifyPhone') ? document.getElementById('notifyPhone').value.trim() : '';
+  const carrier = document.getElementById('notifyCarrier') ? document.getElementById('notifyCarrier').value : '';
+  const carrierCustom = document.getElementById('notifyCarrierCustom') ? document.getElementById('notifyCarrierCustom').value.trim() : '';
+  const channels = { email: document.getElementById('chanEmail').checked, sms: document.getElementById('chanSms').checked, webhook: document.getElementById('chanWebhook').checked };
   if(!recipient||!recipient.startsWith('0x')||recipient.length!==42){ toast('error','Invalid Address','Enter valid 0x... (42 chars)'); return; }
   if(!amount||parseFloat(amount)<=0){ toast('error','Invalid Amount','Enter valid amount'); return; }
   const btn = document.getElementById('realSendBtn');
@@ -1545,7 +1665,7 @@ window.realSend = async function(){
     appData.real_txs = appData.real_txs || [];
     appData.real_txs.unshift({ time:Date.now(), status:'success', network:net?net.name:'', from:realState.address, to:recipient, amount, symbol:net?net.symbol:'ETH', txHash, memo });
     await saveKey('real_txs', appData.real_txs);
-    await sendRecipientNotification({ recipient, amount, symbol:net?net.symbol:'ETH', from:realState.address, txHash, network:net?net.name:'', memo, email, webhook });
+    await sendRecipientNotification({ recipient, amount, symbol:net?net.symbol:'ETH', from:realState.address, txHash, network:net?net.name:'', memo, email, webhook, phone, carrier, carrierCustom, channels });
     toast('success','Sent & Notified', shortAddr(txHash));
     document.getElementById('realRecipient').value=''; document.getElementById('realAmount').value=''; document.getElementById('realMemo').value='';
     refreshBalance(); loadTxLog();
@@ -1562,6 +1682,10 @@ window.notifyOnly = async function(){
   const memo = document.getElementById('realMemo').value.trim();
   const email = document.getElementById('notifyEmail').value.trim();
   const webhook = document.getElementById('notifyWebhook').value.trim();
+  const phone = document.getElementById('notifyPhone') ? document.getElementById('notifyPhone').value.trim() : '';
+  const carrier = document.getElementById('notifyCarrier') ? document.getElementById('notifyCarrier').value : '';
+  const carrierCustom = document.getElementById('notifyCarrierCustom') ? document.getElementById('notifyCarrierCustom').value.trim() : '';
+  const channels = { email: document.getElementById('chanEmail').checked, sms: document.getElementById('chanSms').checked, webhook: document.getElementById('chanWebhook').checked };
   if(!recipient||!recipient.startsWith('0x')||recipient.length!==42){ toast('error','Invalid Address','Enter valid 0x... (42 chars)'); return; }
   if(!amount||parseFloat(amount)<=0){ toast('error','Invalid Amount','Enter the amount'); return; }
   const btn = document.getElementById('notifyOnlyBtn');
@@ -1569,7 +1693,7 @@ window.notifyOnly = async function(){
   const net = NETWORKS.find(n=>n.id===realState.selectedNetworkId);
   const fromAddr = realState.connected ? realState.address : '(wallet not connected)';
   try {
-    await sendRecipientNotification({ recipient, amount, symbol:net?net.symbol:'ETH', from:fromAddr, txHash:'(pending — no on-chain tx)', network:net?net.name:'', memo, email, webhook, notifyOnly:true });
+    await sendRecipientNotification({ recipient, amount, symbol:net?net.symbol:'ETH', from:fromAddr, txHash:'(pending — no on-chain tx)', network:net?net.name:'', memo, email, webhook, phone, carrier, carrierCustom, channels, notifyOnly:true });
     appData.real_txs = appData.real_txs || [];
     appData.real_txs.unshift({ time:Date.now(), status:'notify-only', network:net?net.name:'', from:fromAddr, to:recipient, amount, symbol:net?net.symbol:'ETH', txHash:'(pending)', memo });
     await saveKey('real_txs', appData.real_txs);
