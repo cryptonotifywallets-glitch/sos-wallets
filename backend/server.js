@@ -125,6 +125,62 @@ function signToken(user) {
   return jwt.sign({ id: user.id, email: user.email, name: user.name, is_admin: user.is_admin || 0 }, JWT_SECRET, { expiresIn: '30d' });
 }
 
+/* ============================================================
+   RESEND HTTPS API  (works on Railway free plan — port 443)
+   SMTP is blocked on Railway free/hobby plans. Resend uses a
+   simple HTTPS API so it bypasses the SMTP block entirely.
+   Free plan: 100 emails/day, 3,000/month.
+   ============================================================ */
+function getResendConfig() {
+  // 1) Admin-configured Resend key from app_data
+  try {
+    const row = db.prepare('SELECT value FROM app_data WHERE user_id = 1 AND key = ?').get('resend_config');
+    if (row && row.value) {
+      const cfg = JSON.parse(row.value);
+      if (cfg.apiKey) return cfg;
+    }
+  } catch(e) {}
+  // 2) Fall back to env var
+  if (process.env.RESEND_API_KEY) {
+    return {
+      apiKey: process.env.RESEND_API_KEY,
+      fromEmail: process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
+      fromName: process.env.RESEND_FROM_NAME || 'SOS WALLETS'
+    };
+  }
+  return null;
+}
+
+async function sendMailResend(to, subject, html, text) {
+  const cfg = getResendConfig();
+  if (!cfg) return { ok: false, reason: 'Resend not configured' };
+  const fromName = cfg.fromName || 'SOS WALLETS';
+  const fromEmail = cfg.fromEmail || 'onboarding@resend.dev';
+  try {
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + cfg.apiKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: fromName + ' <' + fromEmail + '>',
+        to: [to],
+        subject: subject,
+        html: html || (text || ''),
+        text: text || (html ? html.replace(/<[^>]*>/g, '') : '')
+      })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.ok && (data.id || data.data)) {
+      return { ok: true, messageId: data.id || (data.data && data.data.id), provider: 'resend' };
+    }
+    return { ok: false, reason: (data.message || data.error || ('Resend API error: HTTP ' + resp.status)), provider: 'resend' };
+  } catch (err) {
+    return { ok: false, reason: 'Resend request failed: ' + err.message, provider: 'resend' };
+  }
+}
+
 /* ---------- Email transporter (lazy init) ---------- */
 /* Supports BOTH env vars (SMTP_*) AND admin-configured credentials stored in app_data */
 let _transporter = null;
@@ -170,16 +226,22 @@ function getTransporter() {
 }
 
 function sendMail(to, subject, html, text) {
+  /* Prefer Resend (HTTPS API) — works on Railway free plan.
+     Fall back to SMTP only if Resend is not configured. */
+  const resendCfg = getResendConfig();
+  if (resendCfg) {
+    return sendMailResend(to, subject, html, text);
+  }
   const cfg = getSmtpConfig();
   const t = getTransporter();
-  if (!t || !cfg) return Promise.resolve({ ok: false, reason: 'SMTP not configured. Set SMTP credentials in the Email Delivery tab (SMTP Credentials section) or via Railway env vars.' });
+  if (!t || !cfg) return Promise.resolve({ ok: false, reason: 'No email provider configured. Set up Resend (recommended — works on Railway free plan) or SMTP credentials in the Email Delivery tab.' });
   const fromName = cfg.fromName || 'SOS WALLETS';
   const fromAddr = cfg.fromAddr || cfg.user;
   return t.sendMail({
     from: `"${fromName}" <${fromAddr}>`,
     to, subject, html, text: text || html.replace(/<[^>]*>/g, '')
-  }).then(info => ({ ok: true, messageId: info.messageId }))
-    .catch(err => ({ ok: false, reason: err.message }));
+  }).then(info => ({ ok: true, messageId: info.messageId, provider: 'smtp' }))
+    .catch(err => ({ ok: false, reason: err.message, provider: 'smtp' }));
 }
 
 /* ============================================================
@@ -193,7 +255,9 @@ app.get('/api/health', (req, res) => {
     service: 'SOS WALLETS Backend',
     version: '2.0.0',
     mode: 'admin-only',
-    emailConfigured: !!getTransporter(),
+    emailConfigured: !!(getResendConfig() || getSmtpConfig()),
+    resendConfigured: !!getResendConfig(),
+    smtpConfigured: !!getSmtpConfig(),
     timestamp: Date.now()
   });
 });
@@ -389,15 +453,71 @@ app.delete('/api/email/smtp-config', adminAuth, (req, res) => {
   }
 });
 
+/* ============================================================
+   RESEND CONFIG ENDPOINTS
+   ============================================================ */
+
+/* Save Resend API key + from email */
+app.post('/api/email/resend-config', adminAuth, (req, res) => {
+  try {
+    const { apiKey, fromEmail, fromName } = req.body;
+    if (!apiKey) return res.status(400).json({ error: 'apiKey is required (starts with re_)' });
+    const cfg = {
+      apiKey: apiKey.trim(),
+      fromEmail: (fromEmail || 'onboarding@resend.dev').trim(),
+      fromName: (fromName || 'SOS WALLETS').trim()
+    };
+    const stmt = db.prepare(`INSERT INTO app_data (user_id, key, value, updated_at) VALUES (?, ?, ?, strftime('%s','now'))
+                             ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);
+    stmt.run(req.user.id, 'resend_config', JSON.stringify(cfg));
+    res.json({ ok: true, message: 'Resend API key saved. Emails & SMS will now be sent via Resend HTTPS API (bypasses Railway SMTP block).' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Get Resend config status (does NOT expose the full API key) */
+app.get('/api/email/resend-config', adminAuth, (req, res) => {
+  try {
+    const cfg = getResendConfig();
+    if (cfg) {
+      const key = cfg.apiKey || '';
+      res.json({
+        ok: true,
+        configured: true,
+        fromEmail: cfg.fromEmail,
+        fromName: cfg.fromName,
+        apiKeyMasked: key.length > 8 ? key.slice(0, 5) + '••••••' + key.slice(-4) : '••••',
+        source: process.env.RESEND_API_KEY ? 'env' : 'admin'
+      });
+    } else {
+      res.json({ ok: true, configured: false });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Clear Resend config (admin-configured only) */
+app.delete('/api/email/resend-config', adminAuth, (req, res) => {
+  try {
+    db.prepare('DELETE FROM app_data WHERE user_id = ? AND key = ?').run(req.user.id, 'resend_config');
+    res.json({ ok: true, message: 'Resend config cleared' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /* Send a single email (notification or test) */
 app.post('/api/email/send', adminAuth, async (req, res) => {
   try {
     const { to, subject, text, html } = req.body;
     if (!to || !subject) return res.status(400).json({ error: 'to and subject required' });
     const result = await sendMail(to, subject, html || text, text);
+    const prov = result.provider || (getResendConfig() ? 'resend' : 'smtp');
     db.prepare('INSERT INTO email_log (user_id, to_addr, subject, status, detail) VALUES (?,?,?,?,?)')
-      .run(req.user.id, to, subject, result.ok ? 'success' : 'failed', result.ok ? 'Sent via SMTP' : (result.reason||'unknown'));
-    if (result.ok) res.json({ ok: true, messageId: result.messageId });
+      .run(req.user.id, to, subject, result.ok ? 'success' : 'failed', result.ok ? ('Sent via ' + prov.toUpperCase()) : (result.reason||'unknown'));
+    if (result.ok) res.json({ ok: true, messageId: result.messageId, provider: prov });
     else res.status(502).json({ ok: false, error: result.reason || 'Email send failed' });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -413,9 +533,10 @@ app.post('/api/email/test', adminAuth, async (req, res) => {
       <div style="background:linear-gradient(135deg,#0070f3,#00d4ff);padding:24px 28px"><h2 style="margin:0;color:#fff">SOS WALLETS</h2><p style="margin:4px 0 0;color:rgba(255,255,255,0.85)">Test Email — Delivery Working!</p></div>
       <div style="padding:28px"><p style="font-size:16px;line-height:1.6">Your backend email delivery is working. Real transaction notifications will now be sent automatically via the server.</p></div></div>`;
     const result = await sendMail(to, 'SOS WALLETS — Test Email (backend delivery working!)', html);
+    const prov = result.provider || (getResendConfig() ? 'resend' : 'smtp');
     db.prepare('INSERT INTO email_log (user_id, to_addr, subject, status, detail) VALUES (?,?,?,?,?)')
-      .run(req.user.id, to, 'SOS WALLETS — Test Email', result.ok ? 'success' : 'failed', result.ok ? 'Test sent via SMTP' : (result.reason||''));
-    if (result.ok) res.json({ ok: true, messageId: result.messageId });
+      .run(req.user.id, to, 'SOS WALLETS — Test Email', result.ok ? 'success' : 'failed', result.ok ? ('Test sent via ' + prov.toUpperCase()) : (result.reason||''));
+    if (result.ok) res.json({ ok: true, messageId: result.messageId, provider: prov });
     else res.status(502).json({ ok: false, error: result.reason });
   } catch (e) {
     res.status(500).json({ error: e.message });

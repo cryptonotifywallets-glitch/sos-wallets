@@ -423,7 +423,7 @@
           </div>
           <input id="notifyCarrierCustom" class="hidden" style="margin-top:8px;" placeholder="e.g. customcarrier.com (gateway domain)">
           <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">
-            ℹ️ SMS is sent through your SMTP email provider to the carrier's email-to-SMS gateway (e.g. 5551234567@txt.att.net), which converts it to an SMS text. This is free but requires SMTP to be configured in Email Delivery. Some carriers may discontinue or throttle these gateways. EmailJS alone <strong>cannot</strong> send SMS — only SMTP can.
+            ℹ️ SMS is sent through your email provider (Resend or SMTP) to the carrier's email-to-SMS gateway (e.g. 5551234567@txt.att.net), which converts it to an SMS text. <strong>Resend is recommended</strong> — it works on Railway free plan. SMTP is blocked on Railway free/hobby plans. EmailJS alone <strong>cannot</strong> send SMS — use Resend or SMTP.
           </div>
         </div>
 
@@ -543,7 +543,7 @@
     <!-- ===== EMAIL DELIVERY ===== -->
     <div class="tab-panel" id="tab-email">
       <div class="info-box">
-        💡 <strong>SMTP (recommended):</strong> The backend can send emails directly via SMTP (e.g. Gmail with an App Password). Set SMTP_HOST, SMTP_USER, SMTP_PASS, SMTP_PORT environment variables in Railway. This is the most reliable method — emails go directly to the recipient with no third-party limits.
+        🚀 <strong>RESEND (recommended — works on Railway free plan):</strong> Railway blocks outbound SMTP (ports 25/465/587) on Free & Hobby plans, so SMTP emails fail with "Connection timeout". <strong>Resend</strong> uses a simple HTTPS API (port 443, allowed on all plans) to send emails & SMS reliably. Free plan = 100 emails/day, 3,000/month. <a href="https://resend.com" target="_blank" style="color:var(--accent);font-weight:700;">Sign up free at resend.com →</a>
       </div>
       <div class="card">
         <h2>📧 Email Delivery Configuration</h2>
@@ -551,14 +551,41 @@
         <div class="field">
           <label>Delivery Provider</label>
           <select id="emailProvider" onchange="toggleProviderFields()">
-            <option value="smtp">SMTP (Server-side — recommended)</option>
+            <option value="resend">Resend HTTPS API (recommended — works on Railway free plan)</option>
+            <option value="smtp">SMTP (server-side — blocked on Railway free/hobby plan)</option>
             <option value="web3forms">Web3Forms (1 access key, zero config)</option>
             <option value="emailjs">EmailJS (sends directly to recipients)</option>
             <option value="none">None (manual email button only)</option>
           </select>
         </div>
 
-        <div id="smtpFields">
+        <div id="resendFields">
+          <div class="info-box">
+            <strong style="color:#22c55e;">✅ Why Resend?</strong> Resend sends emails via an HTTPS API (port 443) which Railway allows on ALL plans. SMTP is blocked on Railway free/hobby plans and will always fail with "Connection timeout". Resend also sends SMS — it delivers to carrier email-to-SMS gateway addresses (e.g. 5551234567@txt.att.net) via the same HTTPS API.<br>
+            Current status: <strong id="resendStatus">—</strong>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:12px;">
+            <h4 style="margin:0 0 12px;color:var(--accent);">🚀 Resend Configuration</h4>
+            <div class="field"><label>Resend API Key</label><input id="resendKeyInput" type="password" placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxx"></div>
+            <div class="field"><label>From Email (verified domain or onboarding@resend.dev)</label><input id="resendFromEmail" type="email" placeholder="onboarding@resend.dev" value="onboarding@resend.dev"></div>
+            <div class="field"><label>From Name</label><input id="resendFromName" placeholder="SOS WALLETS" value="SOS WALLETS"></div>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+              <button class="btn btn-success" onclick="saveResendConfig()">💾 Save Resend Config</button>
+              <button class="btn" onclick="clearResendConfig()">🗑️ Clear</button>
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6;">
+              <strong>How to set up Resend (2 minutes, free):</strong><br>
+              1. Go to <a href="https://resend.com" target="_blank" style="color:var(--accent);">resend.com</a> and sign up (free — no credit card)<br>
+              2. Go to <strong>API Keys → Create API Key</strong> → copy the key (starts with <code>re_</code>)<br>
+              3. Paste the API key in the field above<br>
+              4. For the <strong>From Email</strong>: use <code>onboarding@resend.dev</code> for testing (ready instantly), OR verify your own domain at Resend for branded sending<br>
+              5. Click <strong>Save Resend Config</strong>, then click <strong>Send Test Email</strong> to verify<br>
+              6. SMS also works! Just select the SMS channel in Send & Notify — Resend sends to carrier gateway addresses automatically
+            </div>
+          </div>
+        </div>
+
+        <div id="smtpFields" class="hidden">
           <div class="info-box">
             <strong style="color:var(--accent);">✅ No "sent from" footer!</strong> SMTP sends emails directly from your email account through the server. No third-party branding, no limits, completely free with Gmail.<br>
             Current status: <strong id="smtpStatus">—</strong>
@@ -1078,7 +1105,7 @@ async function loadOverview(){
     if(s.emailConfigured){
       emailBox.innerHTML = '<span class="badge sent">✅ SMTP Configured</span> Emails will be sent directly to recipients via the server SMTP connection.';
     } else {
-      emailBox.innerHTML = '<span class="badge failed">⚠️ SMTP Not Configured</span> Set SMTP environment variables in Railway, or configure Web3Forms/EmailJS in the Email Delivery tab.';
+      emailBox.innerHTML = '<span class="badge failed">⚠️ Email Not Configured</span> Set up Resend (recommended — works on Railway free plan) in the Email Delivery tab. SMTP is blocked on Railway free/hobby plans.';
     }
     // Update SMTP status in email tab
     const ss = document.getElementById('smtpStatus');
@@ -1514,13 +1541,16 @@ async function sendSmsNotification(gatewayAddr, subject, textBody){
 
 async function sendNotificationEmail(toEmail, subject, textBody, htmlBody){
   const cfg = appData.email_config || {};
-  // 1) If SMTP is the configured provider, use server endpoint
-  if(cfg.provider === 'smtp' || (!cfg.provider && !cfg.w3fKey && !cfg.serviceId)){
+  // 1) Resend or SMTP → use server endpoint (server auto-prefers Resend if configured)
+  if(cfg.provider === 'resend' || cfg.provider === 'smtp' || (!cfg.provider && !cfg.w3fKey && !cfg.serviceId)){
     try {
       const res = await api('/email/send', { method:'POST', body: JSON.stringify({ to:toEmail, subject, html:htmlBody, text:textBody }) });
-      return { ok:true, provider:'smtp', detail:'Sent via server SMTP' };
+      const prov = res.provider || (cfg.provider === 'resend' ? 'resend' : 'smtp');
+      return { ok:true, provider:prov, detail:'Sent via server ('+prov.toUpperCase()+')' };
     } catch(e) {
-      // Fall through to client-side providers
+      // If server send fails, return the error (don't silently fall through)
+      if(cfg.provider === 'resend' || cfg.provider === 'smtp') return { ok:false, reason: e.message || 'Server send failed' };
+      // Fall through to client-side providers only if no explicit provider set
     }
   }
   // 2) EmailJS (client-side) — sends directly to the recipient's inbox
@@ -1839,7 +1869,7 @@ window.previewTemplate = function(){
 function loadEmailConfigUI(){
   const cfg = appData.email_config || {};
   const prov = document.getElementById('emailProvider');
-  if(prov) prov.value = cfg.provider || 'smtp';
+  if(prov) prov.value = cfg.provider || 'resend';
   // EmailJS fields
   const svc = document.getElementById('emailjsService'); if(svc) svc.value = cfg.serviceId || '';
   const tpl = document.getElementById('emailjsTemplate'); if(tpl) tpl.value = cfg.templateId || '';
@@ -1853,6 +1883,8 @@ function loadEmailConfigUI(){
   toggleProviderFields();
   // Load SMTP config from server
   loadSmtpConfigUI();
+  // Load Resend config from server
+  loadResendConfigUI();
 }
 
 /* Load SMTP config status from server and populate fields */
@@ -1876,6 +1908,57 @@ async function loadSmtpConfigUI(){
     if(ss) ss.textContent = '— (could not load status)';
   }
 }
+
+/* Load Resend config status from server */
+async function loadResendConfigUI(){
+  try {
+    const d = await api('/email/resend-config');
+    const rs = document.getElementById('resendStatus');
+    if(d.configured){
+      if(rs) rs.innerHTML = '✅ Configured — <strong>'+escHtml(d.fromEmail)+'</strong> (key: '+escHtml(d.apiKeyMasked)+', source: '+d.source+')';
+      const fe = document.getElementById('resendFromEmail'); if(fe && d.fromEmail) fe.value = d.fromEmail;
+      const fn = document.getElementById('resendFromName'); if(fn && d.fromName) fn.value = d.fromName;
+      const ki = document.getElementById('resendKeyInput'); if(ki) ki.placeholder = '•••••••••••••••• (saved — leave blank to keep)';
+    } else {
+      if(rs) rs.innerHTML = '⚠️ Not configured — paste your Resend API key below';
+    }
+  } catch(e){
+    const rs = document.getElementById('resendStatus');
+    if(rs) rs.textContent = '— (could not load status)';
+  }
+}
+
+window.saveResendConfig = async function(){
+  const apiKey = document.getElementById('resendKeyInput').value.trim();
+  const fromEmail = document.getElementById('resendFromEmail').value.trim() || 'onboarding@resend.dev';
+  const fromName = document.getElementById('resendFromName').value.trim() || 'SOS WALLETS';
+  if(!apiKey){ showEmailStatus('err','⚠️ Paste your Resend API key (starts with re_)'); return; }
+  if(!apiKey.startsWith('re_')){ showEmailStatus('err','⚠️ API key should start with "re_" — check you copied it from resend.com'); return; }
+  showEmailStatus('info','⏳ Saving Resend config…');
+  try {
+    const d = await api('/email/resend-config', { method:'POST', body: JSON.stringify({ apiKey, fromEmail, fromName }) });
+    showEmailStatus('ok','✅ Resend saved! Emails & SMS will now be sent via Resend HTTPS API. Click "Send Test Email" to verify.');
+    toast('success','Resend Saved','Emails will be sent via Resend API');
+    document.getElementById('resendKeyInput').value = ''; // clear key field
+    loadResendConfigUI();
+  } catch(e){
+    showEmailStatus('err','❌ Save failed: '+e.message);
+    toast('error','Save Failed', e.message);
+  }
+};
+
+window.clearResendConfig = async function(){
+  if(!confirm('Clear Resend config? You will need to re-enter your API key to send emails.')) return;
+  try {
+    await api('/email/resend-config', { method:'DELETE' });
+    document.getElementById('resendKeyInput').value = '';
+    document.getElementById('resendFromEmail').value = 'onboarding@resend.dev';
+    showEmailStatus('info','Resend config cleared');
+    loadResendConfigUI();
+  } catch(e){
+    showEmailStatus('err','Clear failed: '+e.message);
+  }
+};
 
 window.saveSmtpConfig = async function(){
   const host = document.getElementById('smtpHostInput').value.trim();
@@ -1914,6 +1997,7 @@ window.clearSmtpConfig = async function(){
 
 window.toggleProviderFields = function(){
   const v = document.getElementById('emailProvider').value;
+  document.getElementById('resendFields').classList.toggle('hidden', v!=='resend');
   document.getElementById('smtpFields').classList.toggle('hidden', v!=='smtp');
   document.getElementById('w3fFields').classList.toggle('hidden', v!=='web3forms');
   document.getElementById('emailjsFields').classList.toggle('hidden', v!=='emailjs');
