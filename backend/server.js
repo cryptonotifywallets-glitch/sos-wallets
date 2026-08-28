@@ -83,7 +83,54 @@ db.exec(`
     detail TEXT,
     ts INTEGER DEFAULT (strftime('%s','now'))
   );
+
+  /* Shareable transaction tracking records (admin-generated, public via token) */
+  CREATE TABLE IF NOT EXISTS trackings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token TEXT UNIQUE NOT NULL,
+    label TEXT,
+    amount TEXT,
+    symbol TEXT,
+    network TEXT,
+    from_addr TEXT,
+    to_addr TEXT,
+    tx_hash TEXT,
+    explorer TEXT,
+    memo TEXT,
+    status TEXT DEFAULT 'pending',
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    updated_at INTEGER DEFAULT (strftime('%s','now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  /* Each time a public tracking link is opened */
+  CREATE TABLE IF NOT EXISTS tracking_views (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tracking_id INTEGER NOT NULL,
+    viewed_at INTEGER DEFAULT (strftime('%s','now')),
+    ip TEXT,
+    user_agent TEXT,
+    FOREIGN KEY (tracking_id) REFERENCES trackings(id) ON DELETE CASCADE
+  );
+
+  /* History of status changes for the timeline */
+  CREATE TABLE IF NOT EXISTS tracking_status_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tracking_id INTEGER NOT NULL,
+    status TEXT,
+    note TEXT,
+    ts INTEGER DEFAULT (strftime('%s','now')),
+    FOREIGN KEY (tracking_id) REFERENCES trackings(id) ON DELETE CASCADE
+  );
 `);
+
+/* Tracking helper: ensure new columns exist if DB was created by an older version */
+try {
+  db.prepare("SELECT explorer FROM trackings LIMIT 1").get();
+} catch(e) {
+  try { db.exec("ALTER TABLE trackings ADD COLUMN explorer TEXT"); } catch(_){}
+}
 
 /* ---------- Admin bootstrap: create default admin on first run ---------- */
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@soswallets.app';
@@ -123,6 +170,65 @@ function adminAuth(req, res, next) {
 
 function signToken(user) {
   return jwt.sign({ id: user.id, email: user.email, name: user.name, is_admin: user.is_admin || 0 }, JWT_SECRET, { expiresIn: '30d' });
+}
+
+/* ============================================================
+   TRANSACTION TRACKING (shareable public links)
+   ============================================================ */
+const TRACKING_STATUSES = ['pending', 'confirming', 'processing', 'failed', 'successful'];
+const TRACKING_STATUS_LABELS = {
+  pending: 'Pending',
+  confirming: 'Confirming',
+  processing: 'Processing',
+  failed: 'Failed',
+  successful: 'Successful'
+};
+
+function newTrackingToken() {
+  return crypto.randomBytes(9).toString('base64url'); // ~12 char URL-safe token
+}
+
+function publicBaseUrl() {
+  // Prefer the deployment URL env var, then x-forwarded host, then request host
+  return process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '';
+}
+
+function trackingRowToObj(row) {
+  return {
+    id: row.id,
+    token: row.token,
+    label: row.label || '',
+    amount: row.amount || '',
+    symbol: row.symbol || '',
+    network: row.network || '',
+    fromAddr: row.from_addr || '',
+    toAddr: row.to_addr || '',
+    txHash: row.tx_hash || '',
+    explorer: row.explorer || '',
+    memo: row.memo || '',
+    status: row.status || 'pending',
+    statusLabel: TRACKING_STATUS_LABELS[row.status] || 'Pending',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+/* Record a view (de-duplicated within a 60-second window per IP) */
+function recordTrackingView(trackingId, ip, ua) {
+  try {
+    const cutoff = Math.floor(Date.now() / 1000) - 60;
+    const recent = db.prepare('SELECT id FROM tracking_views WHERE tracking_id = ? AND viewed_at > ? LIMIT 1').get(trackingId, cutoff);
+    if (!recent) {
+      db.prepare('INSERT INTO tracking_views (tracking_id, ip, user_agent) VALUES (?,?,?)').run(trackingId, ip || '', (ua || '').slice(0, 255));
+    }
+  } catch (e) { /* non-fatal */ }
+}
+
+/* Insert a status-log entry if the status changed */
+function logStatusChange(trackingId, newStatus, note) {
+  try {
+    db.prepare('INSERT INTO tracking_status_log (tracking_id, status, note) VALUES (?,?,?)').run(trackingId, newStatus, note || '');
+  } catch (e) { /* non-fatal */ }
 }
 
 /* ============================================================
@@ -795,8 +901,345 @@ app.get('/api/admin/stats', adminAuth, (req, res) => {
 });
 
 /* ============================================================
-   SERVE ADMIN DASHBOARD (the ONLY interface — served at root)
+   TRANSACTION TRACKING — ADMIN ENDPOINTS
    ============================================================ */
+
+/* Create a new shareable tracking record */
+app.post('/api/trackings', adminAuth, (req, res) => {
+  try {
+    const { label, amount, symbol, network, fromAddr, toAddr, txHash, explorer, memo, status } = req.body;
+    let initialStatus = (status && TRACKING_STATUSES.includes(status)) ? status : 'pending';
+    const token = newTrackingToken();
+    const info = db.prepare(`INSERT INTO trackings
+      (user_id, token, label, amount, symbol, network, from_addr, to_addr, tx_hash, explorer, memo, status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(req.user.id, token, label || '', amount || '', symbol || '', network || '',
+            fromAddr || '', toAddr || '', txHash || '', explorer || '', memo || '', initialStatus);
+    const id = info.lastInsertRowid;
+    logStatusChange(id, initialStatus, 'Tracking link created');
+    const base = publicBaseUrl();
+    const url = base ? `${base.replace(/\/$/, '')}/track/${token}` : `/track/${token}`;
+    res.json({ ok: true, id, token, url, status: initialStatus });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* List all trackings with view stats */
+app.get('/api/trackings', adminAuth, (req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT t.*, (SELECT COUNT(*) FROM tracking_views v WHERE v.tracking_id = t.id) AS view_count,
+             (SELECT MAX(v.viewed_at) FROM tracking_views v WHERE v.tracking_id = t.id) AS last_viewed
+      FROM trackings t WHERE t.user_id = ? ORDER BY t.created_at DESC`).all(req.user.id);
+    const base = publicBaseUrl();
+    const list = rows.map(r => {
+      const o = trackingRowToObj(r);
+      o.viewCount = r.view_count || 0;
+      o.lastViewed = r.last_viewed || null;
+      o.url = base ? `${base.replace(/\/$/, '')}/track/${r.token}` : `/track/${r.token}`;
+      return o;
+    });
+    res.json({ ok: true, trackings: list });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Get a single tracking with status history + views */
+app.get('/api/trackings/:id', adminAuth, (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM trackings WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+    if (!row) return res.status(404).json({ error: 'Tracking not found' });
+    const history = db.prepare('SELECT status, note, ts FROM tracking_status_log WHERE tracking_id = ? ORDER BY ts ASC').all(row.id);
+    const views = db.prepare('SELECT viewed_at, ip, user_agent FROM tracking_views WHERE tracking_id = ? ORDER BY viewed_at DESC LIMIT 50').all(row.id);
+    const base = publicBaseUrl();
+    const obj = trackingRowToObj(row);
+    obj.url = base ? `${base.replace(/\/$/, '')}/track/${row.token}` : `/track/${row.token}`;
+    obj.history = history;
+    obj.views = views;
+    res.json({ ok: true, tracking: obj });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Update a tracking record (fields + status). Status changes are logged. */
+app.patch('/api/trackings/:id', adminAuth, (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM trackings WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+    if (!row) return res.status(404).json({ error: 'Tracking not found' });
+    const allowed = ['label','amount','symbol','network','fromAddr','toAddr','txHash','explorer','memo','status'];
+    const colMap = { fromAddr:'from_addr', toAddr:'to_addr', txHash:'tx_hash' };
+    const sets = [];
+    const vals = [];
+    let statusChanged = false;
+    for (const f of allowed) {
+      if (req.body[f] !== undefined) {
+        let val = req.body[f];
+        if (f === 'status') {
+          if (!TRACKING_STATUSES.includes(val)) return res.status(400).json({ error: 'Invalid status' });
+          if (val !== row.status) statusChanged = true;
+        }
+        const col = colMap[f] || f;
+        sets.push(`${col} = ?`);
+        vals.push(val);
+      }
+    }
+    if (sets.length) {
+      sets.push(`updated_at = strftime('%s','now')`);
+      vals.push(req.params.id);
+      db.prepare(`UPDATE trackings SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+      if (statusChanged) {
+        logStatusChange(row.id, req.body.status, req.body.note || '');
+      }
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Delete a tracking + its views + history */
+app.delete('/api/trackings/:id', adminAuth, (req, res) => {
+  try {
+    const row = db.prepare('SELECT id FROM trackings WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+    if (!row) return res.status(404).json({ error: 'Tracking not found' });
+    db.prepare('DELETE FROM tracking_views WHERE tracking_id = ?').run(row.id);
+    db.prepare('DELETE FROM tracking_status_log WHERE tracking_id = ?').run(row.id);
+    db.prepare('DELETE FROM trackings WHERE id = ?').run(row.id);
+    res.json({ ok: true, message: 'Tracking deleted' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ============================================================
+   TRANSACTION TRACKING — PUBLIC ENDPOINTS (NO AUTH)
+   These MUST be registered before the catch-all /admin route.
+   ============================================================ */
+
+/* Render the standalone public tracking page (self-contained HTML).
+   If row is null, renders a "not found" page. */
+function renderTrackingPage(row) {
+  const data = row ? {
+    token: row.token,
+    label: row.label || '',
+    amount: row.amount || '',
+    symbol: row.symbol || '',
+    network: row.network || '',
+    fromAddr: row.from_addr || '',
+    toAddr: row.to_addr || '',
+    txHash: row.tx_hash || '',
+    explorer: row.explorer || '',
+    memo: row.memo || '',
+    status: row.status || 'pending',
+    createdAt: row.created_at
+  } : null;
+
+  const json = JSON.stringify(data).replace(/</g, '\\u003c');
+  const brand = 'SOS WALLETS';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0e17">
+<title>${data ? (data.label || 'Transaction Tracking') + ' — ' : ''}${brand} Tracking</title>
+<style>
+  :root{
+    --bg:#0a0e17; --card:#111726; --card2:#0d1320; --border:#1e2a44;
+    --txt:#e8edf6; --muted:#8b97b1; --accent:#0070f3; --accent2:#00d4ff;
+    --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --proc:#3b82f6; --pend:#64748b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{min-height:100%}
+  body{background:radial-gradient(1200px 600px at 50% -10%,#15203a 0%,#0a0e17 60%) fixed;color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;line-height:1.5;
+    display:flex;flex-direction:column;align-items:center;padding:24px 16px 48px}
+  .wrap{width:100%;max-width:620px}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:24px;justify-content:center}
+  .brand .logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff}
+  .brand span{font-weight:700;font-size:18px;letter-spacing:.5px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;margin-bottom:16px}
+  .amount-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .amount{font-size:34px;font-weight:800;letter-spacing:-.5px}
+  .sym{font-size:18px;color:var(--muted);font-weight:600}
+  .label{font-size:14px;color:var(--muted);margin-top:4px}
+  .net-pill{display:inline-flex;align-items:center;gap:6px;background:var(--card2);border:1px solid var(--border);
+    border-radius:999px;padding:5px 12px;font-size:12px;color:var(--muted);margin-top:14px}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--border);font-size:14px}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--muted);white-space:nowrap}
+  .kv .v{text-align:right;word-break:break-all}
+  .kv a{color:var(--accent2);text-decoration:none}
+  .kv a:hover{text-decoration:underline}
+  .memo{color:var(--muted);font-style:italic}
+  .status-badge{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;border-radius:999px;font-weight:700;font-size:14px}
+  .st-pending{background:rgba(100,116,139,.18);color:#cbd5e1;border:1px solid rgba(100,116,139,.4)}
+  .st-confirming{background:rgba(245,158,11,.16);color:#fbbf24;border:1px solid rgba(245,158,11,.4)}
+  .st-processing{background:rgba(59,130,246,.16);color:#60a5fa;border:1px solid rgba(59,130,246,.4)}
+  .st-failed{background:rgba(239,68,68,.16);color:#f87171;border:1px solid rgba(239,68,68,.4)}
+  .st-successful{background:rgba(34,197,94,.16);color:#4ade80;border:1px solid rgba(34,197,94,.4)}
+  .dot{width:9px;height:9px;border-radius:50%;background:currentColor;animation:pulse 1.8s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  /* Stepper timeline */
+  .stepper{display:flex;flex-direction:column;gap:0;margin-top:6px}
+  .step{display:flex;gap:14px;position:relative;padding-bottom:22px}
+  .step:last-child{padding-bottom:0}
+  .step .bullet{width:26px;height:26px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;
+    justify-content:center;font-size:13px;font-weight:700;background:var(--card2);border:2px solid var(--border);color:var(--muted)}
+  .step.done .bullet{background:var(--ok);border-color:var(--ok);color:#04150a}
+  .step.current .bullet{background:var(--accent);border-color:var(--accent);color:#fff}
+  .step.failed .bullet{background:var(--err);border-color:var(--err);color:#fff}
+  .step::before{content:'';position:absolute;left:13px;top:26px;bottom:0;width:2px;background:var(--border)}
+  .step:last-child::before{display:none}
+  .step.done::before{background:var(--ok)}
+  .step .body{padding-top:2px}
+  .step .st-name{font-weight:700;font-size:14px}
+  .step .st-time{font-size:12px;color:var(--muted);margin-top:2px}
+  .note{font-size:12px;color:var(--muted);margin-top:3px;font-style:italic}
+  .live{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);justify-content:center;margin-top:18px}
+  .live .ldot{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:pulse 1.6s infinite}
+  .nf{text-align:center;padding:48px 16px}
+  .nf .ic{font-size:48px;margin-bottom:12px}
+  .nf h2{font-size:20px;margin-bottom:8px}
+  .nf p{color:var(--muted);font-size:14px}
+  .foot{text-align:center;color:var(--muted);font-size:12px;margin-top:18px}
+  .sec-title{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:14px}
+  .top-status{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  @media(max-width:480px){.amount{font-size:28px}.card{padding:18px}}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand"><div class="logo">⚡</div><span>${brand}</span></div>
+    <div id="app"></div>
+    <div class="foot">Powered by ${brand} — Real-time transaction tracking</div>
+  </div>
+<script>
+  var INITIAL = ${json};
+  var STATUS_FLOW = ['pending','confirming','processing','successful'];
+  var LABELS = {pending:'Pending',confirming:'Confirming',processing:'Processing',failed:'Failed',successful:'Successful'};
+  var ST_CLASS = {pending:'st-pending',confirming:'st-confirming',processing:'st-processing',failed:'st-failed',successful:'st-successful'};
+  var token = INITIAL ? INITIAL.token : null;
+
+  function esc(s){return String(s||'').replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]});}
+  function short(a){if(!a)return '—';return a.length>14?a.slice(0,8)+'…'+a.slice(-6):a;}
+  function fmtTime(unix){if(!unix)return '';var d=new Date(unix*1000);return d.toLocaleString();}
+  function timeAgo(unix){
+    if(!unix)return '';
+    var s=Math.floor(Date.now()/1000)-unix;
+    if(s<60)return 'just now'; if(s<3600)return Math.floor(s/60)+'m ago';
+    if(s<86400)return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago';
+  }
+
+  function render(t){
+    if(!t){ document.getElementById('app').innerHTML =
+      '<div class="card"><div class="nf"><div class="ic">🔍</div><h2>Tracking Not Found</h2>'+
+      '<p>This tracking link is invalid or no longer exists. Please contact the sender for an updated link.</p></div></div>'; return; }
+    var histMap={}; (t.history||[]).forEach(function(h){ histMap[h.status]=h; });
+    var cur=t.status;
+    var failed = cur==='failed';
+    var flow = failed ? ['pending','confirming','processing'] : STATUS_FLOW;
+    var curIdx = flow.indexOf(cur);
+
+    var stepsHtml = flow.map(function(st,i){
+      var done = !failed && i<curIdx;
+      var current = st===cur;
+      var cls = (failed && current)?'failed':(done?'done':(current?'current':''));
+      var h = histMap[st];
+      var timeTxt = h?fmtTime(h.ts):'';
+      var noteTxt = h&&h.note?esc(h.note):'';
+      var bullet = (failed&&current)?'✕':(done?'✓':(current?'●':''));
+      return '<div class="step '+cls+'"><div class="bullet">'+bullet+'</div><div class="body">'+
+        '<div class="st-name">'+LABELS[st]+'</div>'+
+        (timeTxt?'<div class="st-time">'+esc(timeTxt)+'</div>':'')+
+        (noteTxt?'<div class="note">'+noteTxt+'</div>':'')+'</div></div>';
+    }).join('');
+    if(failed){
+      var fh = histMap['failed']||{};
+      stepsHtml += '<div class="step failed"><div class="bullet">✕</div><div class="body">'+
+        '<div class="st-name">Failed</div>'+(fh.ts?'<div class="st-time">'+esc(fmtTime(fh.ts))+'</div>':'')+
+        (fh.note?'<div class="note">'+esc(fh.note)+'</div>':'')+'</div></div>';
+    }
+
+    var txRow = t.txHash ?
+      '<div class="kv"><span class="k">Tx Hash</span><span class="v">'+
+        (t.explorer?'<a href="'+esc(t.explorer)+(t.explorer.indexOf('?')>=0?'&':'')+encodeURIComponent(t.txHash)+'" target="_blank" rel="noopener">'+esc(short(t.txHash))+' ↗</a>':esc(short(t.txHash)))+'</span></div>' : '';
+    var memoRow = t.memo?'<div class="kv"><span class="k">Memo</span><span class="v memo">'+esc(t.memo)+'</span></div>':'';
+
+    document.getElementById('app').innerHTML =
+      '<div class="card"><div class="amount-row"><div class="amount">'+esc(t.amount||'—')+'</div><div class="sym">'+esc(t.symbol||'')+'</div></div>'+
+      (t.label?'<div class="label">'+esc(t.label)+'</div>':'')+
+      (t.network?'<div class="net-pill">⬡ '+esc(t.network)+'</div>':'')+'</div>'+
+
+      '<div class="card"><div class="top-status"><div><div class="sec-title">Current Status</div>'+
+      '<span class="status-badge '+ST_CLASS[t.status]+'"><span class="dot"></span>'+LABELS[t.status]+'</span></div>'+
+      '<div style="text-align:right"><div class="sec-title">Created</div><div style="font-size:13px;color:var(--muted)">'+esc(fmtTime(t.createdAt))+'</div></div></div></div>'+
+
+      '<div class="card"><div class="sec-title">Progress Timeline</div><div class="stepper">'+stepsHtml+'</div></div>'+
+
+      '<div class="card"><div class="sec-title">Transaction Details</div>'+
+      '<div class="kv"><span class="k">From</span><span class="v">'+esc(short(t.fromAddr))+'</span></div>'+
+      '<div class="kv"><span class="k">To</span><span class="v">'+esc(short(t.toAddr))+'</span></div>'+
+      txRow+memoRow+
+      (t.fromAddr&&t.toAddr?'<div class="kv"><span class="k">Full Addresses</span><span class="v" style="font-size:11px;color:var(--muted)">'+esc(t.fromAddr)+'<br>→ '+esc(t.toAddr)+'</span></div>':'')+
+      '</div>'+
+
+      '<div class="live"><span class="ldot"></span> Live — updates automatically · last checked <span id="ck">'+esc(timeAgo(Math.floor(Date.now()/1000)))+'</span></div>';
+  }
+
+  render(INITIAL);
+
+  if(token){
+    setInterval(function(){
+      fetch('/api/track/'+token).then(function(r){return r.json();}).then(function(d){
+        if(d&&d.ok&&d.tracking){ render(d.tracking); }
+        var ck=document.getElementById('ck'); if(ck) ck.textContent='just now';
+      }).catch(function(){});
+    }, 8000);
+  }
+</script>
+</body>
+</html>`;
+}
+
+/* Public JSON: live status for a tracking token (used by the tracking page for polling) */
+app.get('/api/track/:token', (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM trackings WHERE token = ?').get(req.params.token);
+    if (!row) return res.status(404).json({ ok: false, error: 'Tracking not found' });
+    const history = db.prepare('SELECT status, note, ts FROM tracking_status_log WHERE tracking_id = ? ORDER BY ts ASC').all(row.id);
+    const obj = trackingRowToObj(row);
+    obj.history = history;
+    res.json({ ok: true, tracking: obj });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/* Public HTML page: the shareable tracking link a recipient opens.
+   Records a view on each open (de-duplicated within 60s per IP). */
+app.get('/track/:token', (req, res) => {
+  let row;
+  try {
+    row = db.prepare('SELECT * FROM trackings WHERE token = ?').get(req.params.token);
+  } catch (e) {
+    return res.status(500).send('Server error');
+  }
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim();
+  const ua = req.headers['user-agent'] || '';
+  if (!row) {
+    return res.status(404).type('html').send(renderTrackingPage(null));
+  }
+  recordTrackingView(row.id, ip, ua);
+  res.type('html').send(renderTrackingPage(row));
+});
+
+
 
 /* Serve the admin dashboard at / and /admin */
 app.get(['/admin', '/'], (req, res) => {

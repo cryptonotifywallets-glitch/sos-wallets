@@ -256,6 +256,7 @@
       <div class="tab" data-tab="email">📧 Email Delivery</div>
       <div class="tab" data-tab="scheduler">⏰ Scheduler</div>
       <div class="tab" data-tab="transactions">💳 Transactions</div>
+      <div class="tab" data-tab="tracking">📍 Tracking Links</div>
       <div class="tab" data-tab="settings">⚙️ Settings</div>
     </div>
 
@@ -436,6 +437,9 @@
         <button class="btn btn-success btn-block" id="realSendBtn" onclick="realSend()" disabled>🚀 Send &amp; Notify Recipient</button>
         <button class="btn btn-cyan btn-block" id="notifyOnlyBtn" onclick="notifyOnly()" style="margin-top:10px;">
           🔔 Notify Recipient Only (No Funds Needed)
+        </button>
+        <button class="btn btn-ghost btn-block" onclick="createTrackingFromSend()" style="margin-top:10px;">
+          📍 Create Tracking Link for this Transaction
         </button>
 
         <div class="notify-preview hidden" id="realNotifyPreview" style="margin-top:14px;">
@@ -751,6 +755,21 @@
       </div>
     </div>
 
+    <!-- ===== TRACKING LINKS ===== -->
+    <div class="tab-panel" id="tab-tracking">
+      <div class="card">
+        <div class="section-head">
+          <h2>📍 Shareable Tracking Links</h2>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost btn-sm" onclick="loadTrackings()">🔄 Refresh</button>
+            <button class="btn btn-primary btn-sm" onclick="openTrackingModal()">+ Generate Tracking Link</button>
+          </div>
+        </div>
+        <div class="sub">Create a public link for any transaction. Send it to someone — they can open it without logging in to see the live status. You control the outcome (Pending → Confirming → Processing → Failed / Successful) and you can see when they opened the link.</div>
+        <div id="trackingList" style="margin-top:18px;"></div>
+      </div>
+    </div>
+
     <!-- ===== SETTINGS ===== -->
     <div class="tab-panel" id="tab-settings">
       <div class="card">
@@ -851,6 +870,66 @@
     <div id="previewContent" style="border-radius:8px;overflow:hidden;border:1px solid var(--border);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('previewModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="trackingModal">
+  <div class="modal" style="max-width:520px;">
+    <h3>📍 Generate Tracking Link</h3>
+    <div class="sub" style="margin-bottom:14px;">Fill in the transaction details. A public link will be created that anyone can open to track this transaction.</div>
+    <div class="field"><label>Label / Title</label><input id="trk-label" placeholder="e.g. Payment for Order #1042"></div>
+    <div style="display:flex;gap:10px;">
+      <div class="field" style="flex:2;"><label>Amount</label><input id="trk-amount" placeholder="0.25"></div>
+      <div class="field" style="flex:1;"><label>Symbol</label><input id="trk-symbol" placeholder="ETH"></div>
+    </div>
+    <div class="field"><label>Network</label>
+      <select id="trk-network" class="input"></select>
+    </div>
+    <div class="field"><label>From Address</label><input id="trk-from" placeholder="0x... (sender)"></div>
+    <div class="field"><label>To Address</label><input id="trk-to" placeholder="0x... (recipient)"></div>
+    <div class="field"><label>Transaction Hash (optional)</label><input id="trk-txhash" placeholder="0x... (leave blank if not yet sent)"></div>
+    <div class="field"><label>Memo / Note (optional)</label><input id="trk-memo" placeholder="e.g. Settlement for Q3 invoice"></div>
+    <div class="field"><label>Initial Status</label>
+      <select id="trk-status" class="input">
+        <option value="pending">⏳ Pending</option>
+        <option value="confirming">🟡 Confirming</option>
+        <option value="processing">🔵 Processing</option>
+        <option value="failed">🔴 Failed</option>
+        <option value="successful">🟢 Successful</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('trackingModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="createTracking()">Create Tracking Link</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="trackingResultModal">
+  <div class="modal" style="max-width:520px;">
+    <h3>✅ Tracking Link Created</h3>
+    <div class="sub" style="margin-bottom:14px;">Share this link with the recipient. They can open it without logging in to see the live transaction status.</div>
+    <div class="field"><label>Public Tracking URL</label>
+      <div style="display:flex;gap:8px;">
+        <input id="trk-result-url" readonly style="flex:1;font-family:monospace;font-size:12px;">
+        <button class="btn btn-success btn-sm" onclick="copyTrackingUrl()">📋 Copy</button>
+      </div>
+    </div>
+    <div id="trk-result-info" style="font-size:13px;color:var(--muted);margin-top:8px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('trackingResultModal')">Close</button>
+      <button class="btn btn-primary" onclick="openResultTrackingUrl()">↗ Open Link</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="trackingDetailModal">
+  <div class="modal" style="max-width:560px;">
+    <h3>📍 Tracking Details & History</h3>
+    <div id="trk-detail-body"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('trackingDetailModal')">Close</button>
     </div>
   </div>
 </div>
@@ -1226,6 +1305,7 @@ document.querySelectorAll('.tab').forEach(tab=>{
     if(tab.dataset.tab==='overview') loadOverview();
     if(tab.dataset.tab==='send') { renderNetworks(); updateConnUI(); }
     if(tab.dataset.tab==='transactions') loadTxLog();
+    if(tab.dataset.tab==='tracking') loadTrackings();
     if(tab.dataset.tab==='email') loadEmailLog();
   });
 });
@@ -1919,6 +1999,182 @@ window.clearTxLog = async function(){
     loadTxLog();
     toast('info','Cleared','Transaction log cleared');
   } catch(e){ toast('error','Failed', e.message); }
+};
+
+/* ============================================================
+   TRACKING LINKS (shareable public transaction tracking)
+   ============================================================ */
+const TRACK_STATUSES = [
+  { value:'pending',     label:'⏳ Pending',     cls:'pending' },
+  { value:'confirming',  label:'🟡 Confirming',  cls:'pending' },
+  { value:'processing',  label:'🔵 Processing',  cls:'sent' },
+  { value:'failed',      label:'🔴 Failed',      cls:'failed' },
+  { value:'successful',  label:'🟢 Successful',  cls:'sent' }
+];
+
+function populateTrackingNetworks(){
+  const sel = document.getElementById('trk-network');
+  if(!sel) return;
+  if(sel.options.length) return; // already populated
+  sel.innerHTML = '<option value="">— Select network —</option>' +
+    NETWORKS.map(n=>`<option value="${n.name}" data-symbol="${n.symbol}" data-explorer="${n.explorer}">${n.icon} ${n.name} (${n.symbol})</option>`).join('');
+}
+
+window.openTrackingModal = function(prefill){
+  populateTrackingNetworks();
+  document.getElementById('trk-label').value   = (prefill && prefill.label) || '';
+  document.getElementById('trk-amount').value  = (prefill && prefill.amount) || '';
+  document.getElementById('trk-symbol').value  = (prefill && prefill.symbol) || '';
+  document.getElementById('trk-from').value    = (prefill && prefill.fromAddr) || (realState.connected ? realState.address : '');
+  document.getElementById('trk-to').value      = (prefill && prefill.toAddr) || (document.getElementById('realRecipient')?document.getElementById('realRecipient').value:'');
+  document.getElementById('trk-txhash').value  = (prefill && prefill.txHash) || '';
+  document.getElementById('trk-memo').value    = (prefill && prefill.memo) || (document.getElementById('realMemo')?document.getElementById('realMemo').value:'');
+  document.getElementById('trk-status').value  = 'pending';
+  // auto-set network + symbol from the selected network
+  if(prefill && prefill.network){
+    const opt = Array.from(sel=document.getElementById('trk-network').options).find(o=>o.value===prefill.network);
+    if(opt) { document.getElementById('trk-network').value = prefill.network; if(!prefill.symbol) document.getElementById('trk-symbol').value = opt.getAttribute('data-symbol'); }
+  }
+  showModal('trackingModal');
+};
+
+// When network changes, auto-fill symbol + explorer
+document.addEventListener('change', function(e){
+  if(e.target && e.target.id==='trk-network'){
+    const opt = e.target.selectedOptions[0];
+    if(opt && opt.value){
+      if(!document.getElementById('trk-symbol').value) document.getElementById('trk-symbol').value = opt.getAttribute('data-symbol')||'';
+    }
+  }
+});
+
+window.createTracking = async function(){
+  const label   = document.getElementById('trk-label').value.trim();
+  const amount  = document.getElementById('trk-amount').value.trim();
+  const symbol  = document.getElementById('trk-symbol').value.trim();
+  const netSel  = document.getElementById('trk-network');
+  const network = netSel.value;
+  const explorer= netSel.selectedOptions[0] ? (netSel.selectedOptions[0].getAttribute('data-explorer')||'') : '';
+  const fromAddr= document.getElementById('trk-from').value.trim();
+  const toAddr  = document.getElementById('trk-to').value.trim();
+  const txHash  = document.getElementById('trk-txhash').value.trim();
+  const memo    = document.getElementById('trk-memo').value.trim();
+  const status  = document.getElementById('trk-status').value;
+  if(!amount && !label){ toast('error','Missing info','Enter at least a label or amount'); return; }
+  try {
+    const d = await api('/trackings', { method:'POST', body: JSON.stringify({ label, amount, symbol, network, fromAddr, toAddr, txHash, explorer, memo, status }) });
+    closeModal('trackingModal');
+    document.getElementById('trk-result-url').value = d.url;
+    document.getElementById('trk-result-info').innerHTML = `Status: <b>${status}</b> · Amount: <b>${amount||'—'} ${symbol||''}</b>${network?(' · Network: '+escHtml(network)):''}`;
+    showModal('trackingResultModal');
+    loadTrackings();
+    toast('success','Tracking Link Created','Copy the link and send it to the recipient');
+  } catch(e){ toast('error','Failed', e.message); }
+};
+
+window.copyTrackingUrl = function(){
+  const inp = document.getElementById('trk-result-url');
+  inp.select(); inp.setSelectionRange(0,99999);
+  navigator.clipboard.writeText(inp.value).then(()=>toast('success','Copied','Link copied to clipboard'))
+    .catch(()=>{ document.execCommand('copy'); toast('success','Copied','Link copied to clipboard'); });
+};
+
+window.openResultTrackingUrl = function(){
+  const u = document.getElementById('trk-result-url').value;
+  if(u) window.open(u, '_blank');
+};
+
+let _lastTrackingUrl = '';
+function copyText(text){
+  navigator.clipboard.writeText(text).then(()=>toast('success','Copied','Link copied to clipboard'))
+    .catch(()=>{ const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); toast('success','Copied','Link copied to clipboard'); });
+}
+
+window.loadTrackings = async function(){
+  const el = document.getElementById('trackingList');
+  if(!el) return;
+  el.innerHTML = '<div class="empty">Loading tracking links…</div>';
+  try {
+    const d = await api('/trackings');
+    const list = d.trackings || [];
+    if(!list.length){ el.innerHTML = '<div class="empty">No tracking links yet. Click “Generate Tracking Link” to create one.</div>'; return; }
+    el.innerHTML = '<div class="table-wrap"><table><thead><tr>' +
+      '<th>Label / Amount</th><th>Network</th><th>Status</th><th>Views</th><th>Last Opened</th><th>Link</th><th></th>' +
+      '</tr></thead><tbody>' + list.map(t=>{
+        const stOpt = TRACK_STATUSES.map(s=>`<option value="${s.value}" ${s.value===t.status?'selected':''}>${s.label}</option>`).join('');
+        const viewInfo = t.viewCount>0
+          ? `<span class="badge sent">👁 ${t.viewCount}</span><div style="font-size:11px;color:var(--muted);margin-top:3px;">${fmtDate(t.lastViewed)}</div>`
+          : `<span class="badge pending">not opened</span>`;
+        return `<tr>
+          <td><div style="font-weight:600;">${escHtml(t.label||'(untitled)')}</div><div class="mono" style="color:var(--muted);font-size:12px;">${escHtml(t.amount||'—')} ${escHtml(t.symbol||'')}</div></td>
+          <td>${escHtml(t.network||'—')}</td>
+          <td><select class="input" style="padding:4px 8px;font-size:12px;" onchange="updateTrackingStatus(${t.id}, this.value)">${stOpt}</select></td>
+          <td>${viewInfo}</td>
+          <td style="font-size:12px;color:var(--muted);">${t.lastViewed?fmtDate(t.lastViewed):'—'}</td>
+          <td><button class="btn btn-ghost btn-sm" onclick="copyText('${t.url.replace(/'/g,"\\'")}')">📋 Copy</button> <button class="btn btn-ghost btn-sm" onclick="window.open('${t.url.replace(/'/g,"\\'")}','_blank')">↗</button></td>
+          <td>
+            <button class="btn btn-ghost btn-sm" onclick="showTrackingDetail(${t.id})" title="Details & history">ℹ</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteTracking(${t.id})" title="Delete">🗑</button>
+          </td>
+        </tr>`;
+      }).join('') + '</tbody></table></div>';
+  } catch(e){ el.innerHTML = '<div class="empty">Error: '+escHtml(e.message)+'</div>'; }
+};
+
+window.updateTrackingStatus = async function(id, status){
+  try {
+    await api('/trackings/'+id, { method:'PATCH', body: JSON.stringify({ status }) });
+    toast('success','Status Updated','Transaction status set to '+status);
+    loadTrackings();
+  } catch(e){ toast('error','Update Failed', e.message); loadTrackings(); }
+};
+
+window.deleteTracking = async function(id){
+  if(!confirm('Delete this tracking link? The recipient will no longer be able to open it.')) return;
+  try {
+    await api('/trackings/'+id, { method:'DELETE' });
+    toast('info','Deleted','Tracking link removed');
+    loadTrackings();
+  } catch(e){ toast('error','Delete Failed', e.message); }
+};
+
+window.showTrackingDetail = async function(id){
+  try {
+    const d = await api('/trackings/'+id);
+    const t = d.tracking;
+    const hist = (t.history||[]).map(h=>`<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;"><b>${escHtml(h.status)}</b> <span style="color:var(--muted);float:right;">${fmtDate(h.ts)}</span>${h.note?'<div style="color:var(--muted);font-size:12px;">'+escHtml(h.note)+'</div>':''}</div>`).join('') || '<div class="empty">No history</div>';
+    const views = (t.views||[]).map(v=>`<div style="padding:4px 0;font-size:12px;color:var(--muted);">${fmtDate(v.viewed_at)} · ${escHtml(v.ip||'—')} · ${escHtml((v.user_agent||'').slice(0,40))}</div>`).join('') || '<div style="color:var(--muted);font-size:12px;">Not opened yet</div>';
+    document.getElementById('trk-detail-body').innerHTML =
+      `<div style="margin-bottom:14px;">
+        <div style="font-weight:700;font-size:16px;">${escHtml(t.label||'(untitled)')}</div>
+        <div class="mono" style="color:var(--muted);">${escHtml(t.amount||'—')} ${escHtml(t.symbol||'')} · ${escHtml(t.network||'')}</div>
+        <div style="margin-top:8px;"><span class="badge ${t.status==='successful'||t.status==='processing'?'sent':t.status==='failed'?'failed':'pending'}">${escHtml(t.status)}</span></div>
+      </div>
+      <div style="margin-bottom:14px;font-size:13px;">
+        <div><b>From:</b> <span class="mono">${escHtml(t.fromAddr||'—')}</span></div>
+        <div><b>To:</b> <span class="mono">${escHtml(t.toAddr||'—')}</span></div>
+        ${t.txHash?`<div><b>Tx:</b> <span class="mono">${escHtml(t.txHash)}</span></div>`:''}
+        ${t.memo?`<div><b>Memo:</b> ${escHtml(t.memo)}</div>`:''}
+      </div>
+      <div style="margin-bottom:14px;">
+        <div style="font-size:12px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">Status History</div>
+        ${hist}
+      </div>
+      <div>
+        <div style="font-size:12px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">Views (${(t.views||[]).length})</div>
+        ${views}
+      </div>`;
+    showModal('trackingDetailModal');
+  } catch(e){ toast('error','Failed', e.message); }
+};
+
+/* Create a tracking link pre-filled from the current Send & Notify form */
+window.createTrackingFromSend = function(){
+  const net = NETWORKS.find(n=>n.id===realState.selectedNetworkId);
+  const recipient = document.getElementById('realRecipient') ? document.getElementById('realRecipient').value.trim() : '';
+  const amount = document.getElementById('realAmount') ? document.getElementById('realAmount').value.trim() : '';
+  const memo = document.getElementById('realMemo') ? document.getElementById('realMemo').value.trim() : '';
+  openTrackingModal({ amount, symbol: net?net.symbol:'ETH', network: net?net.name:'', fromAddr: realState.connected?realState.address:'', toAddr: recipient, memo, label: memo||'Transaction' });
 };
 
 /* ============================================================
