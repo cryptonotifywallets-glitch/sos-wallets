@@ -507,13 +507,27 @@
 
         <div id="smtpFields">
           <div class="info-box">
-            SMTP is configured on the server. Current status: <strong id="smtpStatus">—</strong><br>
-            Set these environment variables in Railway → Variables:<br>
-            • <code>SMTP_HOST</code> (e.g. smtp.gmail.com)<br>
-            • <code>SMTP_PORT</code> (e.g. 587)<br>
-            • <code>SMTP_USER</code> (your email)<br>
-            • <code>SMTP_PASS</code> (Gmail App Password — not your regular password)<br>
-            • <code>EMAIL_FROM_NAME</code> (e.g. SOS WALLETS)
+            <strong style="color:var(--accent);">✅ No "sent from" footer!</strong> SMTP sends emails directly from your email account through the server. No third-party branding, no limits, completely free with Gmail.<br>
+            Current status: <strong id="smtpStatus">—</strong>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:12px;">
+            <h4 style="margin:0 0 12px;color:var(--accent);">📧 SMTP Credentials (set here — no need to touch Railway)</h4>
+            <div class="field"><label>SMTP Host</label><input id="smtpHostInput" placeholder="smtp.gmail.com" value="smtp.gmail.com"></div>
+            <div class="field"><label>SMTP Port</label><input id="smtpPortInput" placeholder="587" value="587"></div>
+            <div class="field"><label>SMTP User (your email)</label><input id="smtpUserInput" type="email" placeholder="you@gmail.com"></div>
+            <div class="field"><label>SMTP Password (Gmail App Password)</label><input id="smtpPassInput" type="password" placeholder="16-char app password"></div>
+            <div class="field"><label>From Name (optional)</label><input id="smtpFromNameInput" placeholder="SOS WALLETS" value="SOS WALLETS"></div>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+              <button class="btn btn-success" onclick="saveSmtpConfig()">💾 Save SMTP Credentials</button>
+              <button class="btn" onclick="clearSmtpConfig()">🗑️ Clear</button>
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin-top:10px;">
+              <strong>How to get a Gmail App Password:</strong><br>
+              1. Enable 2-Step Verification on your Google account<br>
+              2. Go to <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--accent);">myaccount.google.com/apppasswords</a><br>
+              3. Create an app password (16 chars) — paste it in the password field above<br>
+              4. This is NOT your regular Gmail password — it's a special code for apps
+            </div>
           </div>
         </div>
 
@@ -1701,7 +1715,66 @@ function loadEmailConfigUI(){
   // Test
   const tt = document.getElementById('testTo'); if(tt) tt.value = cfg.testTo || '';
   toggleProviderFields();
+  // Load SMTP config from server
+  loadSmtpConfigUI();
 }
+
+/* Load SMTP config status from server and populate fields */
+async function loadSmtpConfigUI(){
+  try {
+    const d = await api('/email/smtp-config');
+    const ss = document.getElementById('smtpStatus');
+    if(d.configured){
+      if(ss) ss.innerHTML = '✅ Configured — <strong>'+escHtml(d.user)+'</strong> via '+escHtml(d.host)+':'+escHtml(d.port)+' (source: '+d.source+')';
+      // Populate fields (but leave password blank for security)
+      const h = document.getElementById('smtpHostInput'); if(h && !h.value) h.value = d.host;
+      const p = document.getElementById('smtpPortInput'); if(p && !p.value) p.value = d.port;
+      const u = document.getElementById('smtpUserInput'); if(u) u.value = d.user;
+      const fn = document.getElementById('smtpFromNameInput'); if(fn) fn.value = d.fromName || 'SOS WALLETS';
+      const pw = document.getElementById('smtpPassInput'); if(pw) pw.placeholder = '•••••••••••••••• (saved — leave blank to keep)';
+    } else {
+      if(ss) ss.innerHTML = '⚠️ Not configured — fill in credentials below';
+    }
+  } catch(e){
+    const ss = document.getElementById('smtpStatus');
+    if(ss) ss.textContent = '— (could not load status)';
+  }
+}
+
+window.saveSmtpConfig = async function(){
+  const host = document.getElementById('smtpHostInput').value.trim();
+  const port = document.getElementById('smtpPortInput').value.trim() || '587';
+  const user = document.getElementById('smtpUserInput').value.trim();
+  const pass = document.getElementById('smtpPassInput').value;
+  const fromName = document.getElementById('smtpFromNameInput').value.trim() || 'SOS WALLETS';
+  if(!host || !user || !pass){ showEmailStatus('err','⚠️ Fill in Host, User, and Password'); return; }
+  showEmailStatus('info','⏳ Saving SMTP credentials…');
+  try {
+    const d = await api('/email/smtp-config', { method:'POST', body: JSON.stringify({ host, port, user, pass, fromName, fromAddr:user }) });
+    showEmailStatus('ok','✅ SMTP saved! Server will now send emails directly — no EmailJS footer. Click "Send Test Email" to verify.');
+    toast('success','SMTP Saved','Emails will be sent directly from '+user);
+    document.getElementById('smtpPassInput').value = ''; // clear password field
+    loadSmtpConfigUI();
+  } catch(e){
+    showEmailStatus('err','❌ Save failed: '+e.message);
+    toast('error','Save Failed', e.message);
+  }
+};
+
+window.clearSmtpConfig = async function(){
+  if(!confirm('Clear SMTP credentials? You will need to re-enter them to send emails.')) return;
+  try {
+    await api('/email/smtp-config', { method:'DELETE' });
+    document.getElementById('smtpHostInput').value = 'smtp.gmail.com';
+    document.getElementById('smtpPortInput').value = '587';
+    document.getElementById('smtpUserInput').value = '';
+    document.getElementById('smtpPassInput').value = '';
+    showEmailStatus('info','SMTP credentials cleared');
+    loadSmtpConfigUI();
+  } catch(e){
+    showEmailStatus('err','Clear failed: '+e.message);
+  }
+};
 
 window.toggleProviderFields = function(){
   const v = document.getElementById('emailProvider').value;

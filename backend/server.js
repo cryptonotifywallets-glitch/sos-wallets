@@ -126,24 +126,55 @@ function signToken(user) {
 }
 
 /* ---------- Email transporter (lazy init) ---------- */
+/* Supports BOTH env vars (SMTP_*) AND admin-configured credentials stored in app_data */
 let _transporter = null;
+let _transporterKey = ''; // track which credentials were used
+
+function getSmtpConfig() {
+  // 1) Try admin-configured SMTP credentials from app_data
+  try {
+    const row = db.prepare('SELECT value FROM app_data WHERE user_id = 1 AND key = ?').get('smtp_config');
+    if (row && row.value) {
+      const cfg = JSON.parse(row.value);
+      if (cfg.host && cfg.user && cfg.pass) return cfg;
+    }
+  } catch(e) {}
+  // 2) Fall back to env vars
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    return {
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.SMTP_PORT || '587', 10),
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+      fromName: process.env.EMAIL_FROM_NAME || 'SOS WALLETS',
+      fromAddr: process.env.EMAIL_FROM_ADDRESS || process.env.SMTP_USER
+    };
+  }
+  return null;
+}
+
 function getTransporter() {
-  if (_transporter) return _transporter;
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return null;
+  const cfg = getSmtpConfig();
+  if (!cfg) { _transporter = null; return null; }
+  // Recreate transporter if credentials changed
+  const key = cfg.host + cfg.port + cfg.user + cfg.pass;
+  if (_transporter && _transporterKey === key) return _transporter;
   _transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587', 10),
-    secure: false,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+    host: cfg.host,
+    port: parseInt(cfg.port || '587', 10),
+    secure: parseInt(cfg.port || '587', 10) === 465,
+    auth: { user: cfg.user, pass: cfg.pass }
   });
+  _transporterKey = key;
   return _transporter;
 }
 
 function sendMail(to, subject, html, text) {
+  const cfg = getSmtpConfig();
   const t = getTransporter();
-  if (!t) return Promise.resolve({ ok: false, reason: 'SMTP not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS env vars, or use the Email Delivery tab to configure Web3Forms/EmailJS.' });
-  const fromName = process.env.EMAIL_FROM_NAME || 'SOS WALLETS';
-  const fromAddr = process.env.EMAIL_FROM_ADDRESS || process.env.SMTP_USER;
+  if (!t || !cfg) return Promise.resolve({ ok: false, reason: 'SMTP not configured. Set SMTP credentials in the Email Delivery tab (SMTP Credentials section) or via Railway env vars.' });
+  const fromName = cfg.fromName || 'SOS WALLETS';
+  const fromAddr = cfg.fromAddr || cfg.user;
   return t.sendMail({
     from: `"${fromName}" <${fromAddr}>`,
     to, subject, html, text: text || html.replace(/<[^>]*>/g, '')
@@ -302,6 +333,49 @@ app.delete('/api/tx', adminAuth, (req, res) => {
 /* ============================================================
    EMAIL DELIVERY
    ============================================================ */
+
+/* Save SMTP credentials (admin-configured, stored in app_data) */
+app.post('/api/email/smtp-config', adminAuth, (req, res) => {
+  try {
+    const { host, port, user, pass, fromName, fromAddr } = req.body;
+    if (!host || !user || !pass) return res.status(400).json({ error: 'host, user, and pass are required' });
+    const cfg = { host, port: port || '587', user, pass, fromName: fromName || 'SOS WALLETS', fromAddr: fromAddr || user };
+    // Save to app_data
+    const stmt = db.prepare(`INSERT INTO app_data (user_id, key, value, updated_at) VALUES (?, ?, ?, strftime('%s','now'))
+                             ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);
+    stmt.run(req.user.id, 'smtp_config', JSON.stringify(cfg));
+    // Reset transporter so it picks up new credentials
+    _transporter = null; _transporterKey = '';
+    res.json({ ok: true, message: 'SMTP credentials saved. Server will now send emails directly — no EmailJS footer!' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Get SMTP config status (returns whether SMTP is configured, without exposing password) */
+app.get('/api/email/smtp-config', adminAuth, (req, res) => {
+  try {
+    const cfg = getSmtpConfig();
+    if (cfg) {
+      res.json({ ok: true, configured: true, host: cfg.host, port: cfg.port, user: cfg.user, fromName: cfg.fromName, fromAddr: cfg.fromAddr, source: process.env.SMTP_USER ? 'env' : 'admin' });
+    } else {
+      res.json({ ok: true, configured: false });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Clear SMTP credentials (admin-configured only) */
+app.delete('/api/email/smtp-config', adminAuth, (req, res) => {
+  try {
+    db.prepare('DELETE FROM app_data WHERE user_id = ? AND key = ?').run(req.user.id, 'smtp_config');
+    _transporter = null; _transporterKey = '';
+    res.json({ ok: true, message: 'SMTP credentials cleared' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 /* Send a single email (notification or test) */
 app.post('/api/email/send', adminAuth, async (req, res) => {
