@@ -477,15 +477,15 @@ app.get('/api/auth/me', auth, (req, res) => {
 app.post('/api/admin/change-password', adminAuth, (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'currentPassword and newPassword required' });
-    if (newPassword.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current PIN and new PIN required' });
+    if (newPassword.length < 6) return res.status(400).json({ error: 'New PIN must be at least 6 characters' });
 
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-    if (!bcrypt.compareSync(currentPassword, user.password_hash)) return res.status(401).json({ error: 'Current password is incorrect' });
+    if (!bcrypt.compareSync(currentPassword, user.password_hash)) return res.status(401).json({ error: 'Current PIN is incorrect' });
 
     const hash = bcrypt.hashSync(newPassword, 10);
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
-    res.json({ ok: true, message: 'Password changed successfully' });
+    res.json({ ok: true, message: 'PIN changed successfully' });
   } catch (e) {
     res.status(500).json({ error: 'Server error: ' + e.message });
   }

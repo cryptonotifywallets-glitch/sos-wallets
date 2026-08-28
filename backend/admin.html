@@ -754,21 +754,21 @@
     <!-- ===== SETTINGS ===== -->
     <div class="tab-panel" id="tab-settings">
       <div class="card">
-        <h2>🔐 Change Password</h2>
-        <div class="sub">Update your admin login password</div>
+        <h2>🔐 Change PIN / Password</h2>
+        <div class="sub">Update your admin login PIN</div>
         <div class="field">
-          <label>Current Password</label>
+          <label>Current PIN</label>
           <input id="curPass" type="password" placeholder="••••••••">
         </div>
         <div class="field">
-          <label>New Password</label>
+          <label>New PIN</label>
           <input id="newPass" type="password" placeholder="At least 6 characters">
         </div>
         <div class="field">
-          <label>Confirm New Password</label>
-          <input id="newPass2" type="password" placeholder="Re-enter new password">
+          <label>Confirm New PIN</label>
+          <input id="newPass2" type="password" placeholder="Re-enter new PIN">
         </div>
-        <button class="btn btn-primary" onclick="changePassword()">🔐 Change Password</button>
+        <button class="btn btn-primary" onclick="changePassword()">🔐 Change PIN</button>
         <div class="status-msg hidden" id="passStatus"></div>
       </div>
 
@@ -2355,14 +2355,14 @@ window.changePassword = async function(){
   const np2 = document.getElementById('newPass2').value;
   const st = document.getElementById('passStatus');
   if(!cur||!np){ st.className='status-msg err'; st.textContent='Fill in all fields'; st.classList.remove('hidden'); return; }
-  if(np!==np2){ st.className='status-msg err'; st.textContent='New passwords do not match'; st.classList.remove('hidden'); return; }
-  if(np.length<6){ st.className='status-msg err'; st.textContent='Password must be at least 6 characters'; st.classList.remove('hidden'); return; }
-  st.className='status-msg info'; st.textContent='Changing password…'; st.classList.remove('hidden');
+  if(np!==np2){ st.className='status-msg err'; st.textContent='New PINs do not match'; st.classList.remove('hidden'); return; }
+  if(np.length<6){ st.className='status-msg err'; st.textContent='New PIN must be at least 6 characters'; st.classList.remove('hidden'); return; }
+  st.className='status-msg info'; st.textContent='Changing PIN…'; st.classList.remove('hidden');
   try {
     const d = await api('/admin/change-password', { method:'POST', body: JSON.stringify({ currentPassword:cur, newPassword:np }) });
     st.className='status-msg ok'; st.textContent='✅ '+d.message;
     document.getElementById('curPass').value=''; document.getElementById('newPass').value=''; document.getElementById('newPass2').value='';
-    toast('success','Password Changed','Use your new password next time you log in');
+    toast('success','PIN Changed','Use your new PIN next time you log in');
   } catch(e){
     st.className='status-msg err'; st.textContent='❌ '+e.message;
     toast('error','Failed', e.message);

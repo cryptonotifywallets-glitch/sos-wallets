@@ -155,6 +155,32 @@ function doLogin(){
   enterApp();
 }
 
+/* Change PIN from Settings (while logged in) */
+function changePin(){
+  const cur=document.getElementById('settings-cur-pin').value;
+  const np=document.getElementById('settings-new-pin').value;
+  const np2=document.getElementById('settings-new-pin2').value;
+  const st=document.getElementById('pin-change-status');
+  if(!cur||!np||!np2){ st.style.color='#ef4444'; st.textContent='Fill in all fields.'; return; }
+  const account=getAccount();
+  if(!account){ st.style.color='#ef4444'; st.textContent='No PIN set on this device.'; return; }
+  if(account.password!==hashStr(cur)){ st.style.color='#ef4444'; st.textContent='Current PIN is incorrect.'; return; }
+  if(np.length<4){ st.style.color='#ef4444'; st.textContent='New PIN must be at least 4 characters.'; return; }
+  if(np!==np2){ st.style.color='#ef4444'; st.textContent='New PINs do not match.'; return; }
+  /* Save new PIN */
+  const updated={name:account.name, email:account.email, password:hashStr(np), createdAt:account.createdAt};
+  setUsers([updated]);
+  /* Clear biometric since PIN changed — re-enroll if desired */
+  localStorage.removeItem(K.biometric);
+  /* Clear fields */
+  document.getElementById('settings-cur-pin').value='';
+  document.getElementById('settings-new-pin').value='';
+  document.getElementById('settings-new-pin2').value='';
+  st.style.color='#22c55e'; st.textContent='✅ PIN changed successfully!';
+  toast('success','PIN Changed','Use your new PIN next time you log in.');
+  refreshBiometricUI();
+}
+
 /* ---------- Biometric (WebAuthn) — client-side ---------- */
 function webAuthnSupported(){ return window.PublicKeyCredential && navigator.credentials; }
 
@@ -2678,7 +2704,7 @@ try{
     'applyPreset','renderPresets','populateTemplateForm','renderLogoPreview',
     'setLogoPreset','setLinkPreset','readTemplateFromForm','saveTemplate','resetTemplate',
     'previewTemplate','initTemplateComposer','closeTmplPreview',
-    'doRegister','doLogin','logout','toggleTheme','showQR','closeQRModal',
+    'doRegister','doLogin','changePin','logout','toggleTheme','showQR','closeQRModal',
     'switchMode','switchSub','init','uid','fmtAmt','shortAddr','nowStr','toast'];
   for(var i=0;i<__expose.length;i++){ try{ if(typeof eval(__expose[i])!=='undefined'){ (typeof window!=='undefined') && (window[__expose[i]]=eval(__expose[i])); } }catch(e){} }
   var __exposeC=['NETWORKS','DEFAULT_TOKENS','TEMPLATE_PRESETS','LOGO_PRESETS','LINK_PRESETS',

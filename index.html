@@ -596,6 +596,20 @@
           </div>
         </div>
 
+        <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:10px;">
+          <div>
+            <div class="sr-label">🔐 Change PIN / Password</div>
+            <div class="sr-desc">Update your login PIN. You'll need to enter your current PIN first.</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <input class="input" id="settings-cur-pin" type="password" placeholder="Current PIN" inputmode="numeric" style="text-align:center;letter-spacing:3px;">
+            <input class="input" id="settings-new-pin" type="password" placeholder="New PIN (min 4 chars)" inputmode="numeric" style="text-align:center;letter-spacing:3px;">
+            <input class="input" id="settings-new-pin2" type="password" placeholder="Confirm new PIN" inputmode="numeric" style="text-align:center;letter-spacing:3px;">
+            <button class="btn btn-primary btn-sm" onclick="changePin()">🔐 Change PIN</button>
+            <div id="pin-change-status" style="font-size:0.78rem;text-align:center;min-height:1.2em;"></div>
+          </div>
+        </div>
+
         <div class="settings-row">
           <div>
             <div class="sr-label">Simulator token prices (USD)</div>
