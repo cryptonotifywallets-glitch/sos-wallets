@@ -338,8 +338,20 @@ app.delete('/api/tx', adminAuth, (req, res) => {
 app.post('/api/email/smtp-config', adminAuth, (req, res) => {
   try {
     const { host, port, user, pass, fromName, fromAddr } = req.body;
-    if (!host || !user || !pass) return res.status(400).json({ error: 'host, user, and pass are required' });
-    const cfg = { host, port: port || '587', user, pass, fromName: fromName || 'SOS WALLETS', fromAddr: fromAddr || user };
+    if (!host || !user) return res.status(400).json({ error: 'host and user are required' });
+    // If no password provided, try to keep the existing one
+    let finalPass = pass;
+    if (!finalPass) {
+      try {
+        const existing = db.prepare('SELECT value FROM app_data WHERE user_id = ? AND key = ?').get(req.user.id, 'smtp_config');
+        if (existing && existing.value) {
+          const oldCfg = JSON.parse(existing.value);
+          finalPass = oldCfg.pass;
+        }
+      } catch(e) {}
+    }
+    if (!finalPass) return res.status(400).json({ error: 'password is required (enter a new password or re-enter existing one)' });
+    const cfg = { host, port: port || '587', user, pass: finalPass, fromName: fromName || 'SOS WALLETS', fromAddr: fromAddr || user };
     // Save to app_data
     const stmt = db.prepare(`INSERT INTO app_data (user_id, key, value, updated_at) VALUES (?, ?, ?, strftime('%s','now'))
                              ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);

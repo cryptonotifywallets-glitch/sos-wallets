@@ -1883,7 +1883,7 @@ window.saveSmtpConfig = async function(){
   const user = document.getElementById('smtpUserInput').value.trim();
   const pass = document.getElementById('smtpPassInput').value;
   const fromName = document.getElementById('smtpFromNameInput').value.trim() || 'SOS WALLETS';
-  if(!host || !user || !pass){ showEmailStatus('err','⚠️ Fill in Host, User, and Password'); return; }
+  if(!host || !user){ showEmailStatus('err','⚠️ Fill in Host and User (your email). Password can be left blank if already saved.'); return; }
   showEmailStatus('info','⏳ Saving SMTP credentials…');
   try {
     const d = await api('/email/smtp-config', { method:'POST', body: JSON.stringify({ host, port, user, pass, fromName, fromAddr:user }) });
