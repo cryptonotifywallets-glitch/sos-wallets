@@ -280,6 +280,194 @@ app.post('/api/auth/login', (req, res) => {
   }
 });
 
+/* ============================================================
+   PIN-ONLY LOGIN (no email/username needed — stress-free)
+   The single admin logs in with just a PIN/password.
+   ============================================================ */
+app.post('/api/auth/pin-login', (req, res) => {
+  try {
+    const { pin } = req.body;
+    if (!pin) return res.status(400).json({ error: 'PIN is required' });
+
+    // Find THE admin (first is_admin user). No email needed.
+    const user = db.prepare('SELECT * FROM users WHERE is_admin = 1 ORDER BY id ASC LIMIT 1').get();
+    if (!user) return res.status(401).json({ error: 'No admin account found' });
+    if (!bcrypt.compareSync(pin, user.password_hash)) return res.status(401).json({ error: 'Invalid PIN' });
+
+    const token = signToken(user);
+    res.json({ ok: true, token, user: { id: user.id, name: user.name, email: user.email, is_admin: 1 } });
+  } catch (e) {
+    res.status(500).json({ error: 'Server error: ' + e.message });
+  }
+});
+
+/* ============================================================
+   BIOMETRIC (WebAuthn) — fingerprint / Face ID / Windows Hello
+   Enroll once per device, then log in with biometrics (no PIN).
+   Credential stored in app_data (key: webauthn_cred). Per-admin.
+   Uses Node built-in crypto (no extra deps).
+   ============================================================ */
+function b64urlToBuf(b64url){ return Buffer.from(b64url, 'base64url'); }
+function bufToB64url(buf){ return Buffer.from(buf).toString('base64url'); }
+
+/* RP (relying party) id + origin — derived from request so it works on any host */
+function rpConfig(req){
+  const origin = (req.headers.origin || req.headers.referer || ('http://localhost:' + (process.env.PORT||3001))).replace(/\/$/,'');
+  let host = 'localhost';
+  try { host = new URL(origin).hostname; } catch(e){}
+  return { id: host, origin, name: 'SOS WALLETS' };
+}
+
+/* Temporary challenge store (in-memory, keyed by random id, expires in 5 min) */
+const challenges = new Map();
+function setChallenge(purpose){
+  const id = crypto.randomBytes(16).toString('hex');
+  const challenge = crypto.randomBytes(32).toString('base64url');
+  challenges.set(id, { challenge, purpose, ts: Date.now() });
+  // cleanup old
+  for (const [k,v] of challenges) if (Date.now()-v.ts > 5*60*1000) challenges.delete(k);
+  return { id, challenge };
+}
+function takeChallenge(id, purpose){
+  const v = challenges.get(id);
+  if (!v) return null;
+  challenges.delete(id);
+  if (v.purpose !== purpose) return null;
+  if (Date.now()-v.ts > 5*60*1000) return null;
+  return v.challenge;
+}
+
+/* Check if a biometric credential is enrolled */
+app.get('/api/auth/biometric/status', (req, res) => {
+  try {
+    const row = db.prepare("SELECT value FROM app_data WHERE user_id = 1 AND key = 'webauthn_cred'").get();
+    res.json({ ok: true, enrolled: !!(row && row.value) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* STEP 1 of enroll: server sends a registration challenge */
+app.post('/api/auth/biometric/register/begin', adminAuth, (req, res) => {
+  try {
+    const { id, challenge } = setChallenge('register');
+    const rp = rpConfig(req);
+    const user = db.prepare('SELECT id, email FROM users WHERE id = ?').get(req.user.id);
+    const pubKeyOpts = {
+      challenge,
+      rp: { name: rp.name, id: rp.id },
+      user: {
+        id: bufToB64url(Buffer.from(String(user.id))),
+        name: user.email || 'admin',
+        displayName: 'SOS WALLETS Admin'
+      },
+      pubKeyCredParams: [
+        { type: 'public-key', alg: -7 },   // ES256
+        { type: 'public-key', alg: -257 }  // RS256
+      ],
+      authenticatorSelection: { userVerification: 'preferred', residentKey: 'preferred' },
+      timeout: 60000,
+      attestation: 'none'
+    };
+    res.json({ ok: true, challengeId: id, publicKey: pubKeyOpts });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* STEP 2 of enroll: verify the credential the browser created and store it */
+app.post('/api/auth/biometric/register/finish', adminAuth, (req, res) => {
+  try {
+    const { challengeId, credential } = req.body;
+    if (!challengeId || !credential) return res.status(400).json({ error: 'challengeId and credential required' });
+    const expected = takeChallenge(challengeId, 'register');
+    if (!expected) return res.status(400).json({ error: 'Challenge expired or invalid' });
+
+    // Minimal verification: decode clientDataJSON, check challenge + origin.
+    const clientDataJSON = Buffer.from(credential.response.clientDataJSON, 'base64url').toString('utf8');
+    let clientData; try { clientData = JSON.parse(clientDataJSON); } catch(e){ return res.status(400).json({ error: 'Bad clientDataJSON' }); }
+    if (clientData.type !== 'webauthn.create') return res.status(400).json({ error: 'Wrong ceremony type' });
+    if (clientData.challenge !== expected) return res.status(400).json({ error: 'Challenge mismatch' });
+    const rp = rpConfig(req);
+    if (clientData.origin !== rp.origin) return res.status(400).json({ error: 'Origin mismatch: '+clientData.origin+' vs '+rp.origin });
+
+    // Store credential (credential id + public key + counter).
+    const credRecord = {
+      id: credential.id,
+      publicKey: credential.response.publicKey, // base64url
+      counter: 0,
+      createdAt: Date.now()
+    };
+    const stmt = db.prepare(`INSERT INTO app_data (user_id, key, value, updated_at) VALUES (?, ?, ?, strftime('%s','now'))
+                             ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);
+    stmt.run(req.user.id, 'webauthn_cred', JSON.stringify(credRecord));
+    res.json({ ok: true, message: 'Biometric enrolled. You can now log in with fingerprint/Face ID.' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* STEP 1 of biometric LOGIN: server sends an authentication challenge (no auth needed) */
+app.post('/api/auth/biometric/login/begin', (req, res) => {
+  try {
+    const row = db.prepare("SELECT value FROM app_data WHERE user_id = 1 AND key = 'webauthn_cred'").get();
+    if (!row || !row.value) return res.status(400).json({ error: 'No biometric credential enrolled' });
+    const cred = JSON.parse(row.value);
+    const { id, challenge } = setChallenge('login');
+    const rp = rpConfig(req);
+    const opts = {
+      challenge,
+      rpId: rp.id,
+      allowCredentials: [{ type: 'public-key', id: cred.id }],
+      userVerification: 'preferred',
+      timeout: 60000
+    };
+    res.json({ ok: true, challengeId: id, publicKey: opts });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* STEP 2 of biometric LOGIN: verify the assertion and issue a JWT */
+app.post('/api/auth/biometric/login/finish', (req, res) => {
+  try {
+    const { challengeId, assertion } = req.body;
+    if (!challengeId || !assertion) return res.status(400).json({ error: 'challengeId and assertion required' });
+    const expected = takeChallenge(challengeId, 'login');
+    if (!expected) return res.status(400).json({ error: 'Challenge expired or invalid' });
+
+    const row = db.prepare("SELECT value FROM app_data WHERE user_id = 1 AND key = 'webauthn_cred'").get();
+    if (!row) return res.status(400).json({ error: 'No biometric credential enrolled' });
+    const cred = JSON.parse(row.value);
+    if (assertion.id !== cred.id) return res.status(400).json({ error: 'Credential does not match' });
+
+    const clientDataJSON = Buffer.from(assertion.response.clientDataJSON, 'base64url').toString('utf8');
+    let clientData; try { clientData = JSON.parse(clientDataJSON); } catch(e){ return res.status(400).json({ error: 'Bad clientDataJSON' }); }
+    if (clientData.type !== 'webauthn.get') return res.status(400).json({ error: 'Wrong ceremony type' });
+    if (clientData.challenge !== expected) return res.status(400).json({ error: 'Challenge mismatch' });
+    const rp = rpConfig(req);
+    if (clientData.origin !== rp.origin) return res.status(400).json({ error: 'Origin mismatch' });
+
+    // Signature verification (ES256/RS256 via Node crypto using the stored SPKI public key).
+    const sigBuf = Buffer.from(assertion.response.signature, 'base64url');
+    const authData = Buffer.from(assertion.response.authenticatorData, 'base64url');
+    const clientDataHash = crypto.createHash('sha256').update(clientDataJSON).digest();
+    const signedData = Buffer.concat([authData, clientDataHash]);
+    const spki = Buffer.from(cred.publicKey, 'base64url');
+    let verified = false;
+    // Try EC (ES256, alg -7) first, then RSA (RS256, alg -257)
+    try { verified = crypto.createVerify('SHA256').update(signedData).verify({ key: spki, format: 'der', type: 'spki' }, sigBuf); } catch(e){}
+    if (!verified) { try { verified = crypto.createVerify('RSA-SHA256').update(signedData).verify({ key: spki, format: 'der', type: 'spki' }, sigBuf); } catch(e){} }
+    if (!verified) return res.status(401).json({ error: 'Biometric signature verification failed' });
+
+    // Issue token for the admin
+    const user = db.prepare('SELECT * FROM users WHERE is_admin = 1 ORDER BY id ASC LIMIT 1').get();
+    if (!user) return res.status(401).json({ error: 'No admin account' });
+    const token = signToken(user);
+    res.json({ ok: true, token, user: { id: user.id, name: user.name, email: user.email, is_admin: 1 } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* Remove biometric credential */
+app.delete('/api/auth/biometric', adminAuth, (req, res) => {
+  try {
+    db.prepare("DELETE FROM app_data WHERE user_id = ? AND key = 'webauthn_cred'").run(req.user.id);
+    res.json({ ok: true, message: 'Biometric credential removed' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 /* ---------- Get current admin ---------- */
 app.get('/api/auth/me', auth, (req, res) => {
   res.json({ ok: true, user: req.user });

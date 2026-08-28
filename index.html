@@ -25,47 +25,37 @@
     <div class="login-card">
       <div class="login-logo">
         <h1>⚡ SOS WALLETS</h1>
-        <p>Sign in to access your wallets</p>
-      </div>
-
-      <div class="login-tabs">
-        <button class="login-tab active" id="lt-login" onclick="switchLoginTab('login')">Sign In</button>
-        <button class="login-tab" id="lt-register" onclick="switchLoginTab('register')">Register</button>
+        <p>Enter your PIN to access your wallets</p>
       </div>
 
       <div id="login-form">
         <div class="form-group">
-          <label>Email or Username</label>
-          <input class="input" id="login-email" placeholder="you@example.com">
-        </div>
-        <div class="form-group">
-          <label>Password</label>
-          <input class="input" id="login-pass" type="password" placeholder="••••••••">
+          <label>PIN / Password</label>
+          <input class="input" id="login-pass" type="password" placeholder="••••••••" autofocus inputmode="numeric" style="text-align:center;letter-spacing:4px;font-size:20px;">
         </div>
         <button class="btn btn-primary btn-full" onclick="doLogin()">🔓 Sign In</button>
-        <p style="text-align:center;margin-top:14px;font-size:0.76rem;color:var(--text-muted);">
-          First time? Switch to Register to create an account.
+        <button class="btn btn-full" id="biometricBtn" style="margin-top:10px;display:none;" onclick="biometricLogin()">👆 Use Biometric (Fingerprint / Face ID)</button>
+        <p style="text-align:center;margin-top:14px;font-size:0.76rem;color:var(--text-muted);" id="login-hint">
+          First time? Create a PIN below.
         </p>
+        <div style="text-align:center;margin-top:8px;">
+          <button class="btn btn-ghost btn-sm" id="setupPinBtn" onclick="switchLoginTab('setup')">Create / Change PIN</button>
+        </div>
       </div>
 
       <div id="register-form" class="hidden">
         <div class="form-group">
-          <label>Display Name</label>
-          <input class="input" id="reg-name" placeholder="Your name">
+          <label>Create a PIN / Password</label>
+          <input class="input" id="reg-pass" type="password" placeholder="Choose a PIN (min 4 chars)" inputmode="numeric" style="text-align:center;letter-spacing:4px;font-size:20px;">
         </div>
         <div class="form-group">
-          <label>Email</label>
-          <input class="input" id="reg-email" type="email" placeholder="you@example.com">
+          <label>Confirm PIN</label>
+          <input class="input" id="reg-pass2" type="password" placeholder="Re-enter PIN" inputmode="numeric" style="text-align:center;letter-spacing:4px;font-size:20px;">
         </div>
-        <div class="form-group">
-          <label>Password (min 6 chars)</label>
-          <input class="input" id="reg-pass" type="password" placeholder="••••••••">
-        </div>
-        <div class="form-group">
-          <label>Confirm Password</label>
-          <input class="input" id="reg-pass2" type="password" placeholder="••••••••">
-        </div>
-        <button class="btn btn-primary btn-full" onclick="doRegister()">✨ Create Account</button>
+        <button class="btn btn-primary btn-full" onclick="doRegister()">💾 Save PIN</button>
+        <p style="text-align:center;margin-top:12px;">
+          <button class="btn btn-ghost btn-sm" onclick="switchLoginTab('login')">← Back to Sign In</button>
+        </p>
       </div>
 
       <div style="text-align:center;margin-top:18px;">
@@ -593,6 +583,17 @@
             <input type="checkbox" id="autologin-toggle" onchange="toggleAutologin()" checked>
             <span class="toggle-slider"></span>
           </label>
+        </div>
+
+        <div class="settings-row">
+          <div>
+            <div class="sr-label">👆 Biometric Login</div>
+            <div class="sr-desc">Use fingerprint / Face ID / Windows Hello to sign in instead of typing your PIN. Requires HTTPS or localhost.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <button class="btn btn-success btn-sm" onclick="enrollBiometric()">👆 Enroll</button>
+            <button class="btn btn-danger btn-sm" onclick="removeBiometric()">🗑 Remove</button>
+          </div>
         </div>
 
         <div class="settings-row">

@@ -223,15 +223,16 @@
     <div class="login-error" id="loginError"></div>
     <form id="loginForm">
       <div class="field">
-        <label>Email</label>
-        <input type="email" id="loginEmail" placeholder="admin email" required autocomplete="username">
+        <label>PIN / Password</label>
+        <input type="password" id="loginPass" placeholder="Enter your PIN" required autocomplete="current-password" autofocus inputmode="numeric" style="text-align:center;letter-spacing:4px;font-size:20px;">
       </div>
-      <div class="field">
-        <label>Password</label>
-        <input type="password" id="loginPass" placeholder="••••••••" required autocomplete="current-password">
-      </div>
-      <button type="submit" class="btn btn-primary btn-block" id="loginBtn">Login</button>
+      <button type="submit" class="btn btn-primary btn-block" id="loginBtn">🔓 Sign In</button>
+      <button type="button" class="btn btn-block" id="biometricBtn" style="margin-top:10px;display:none;">👆 Use Biometric (Fingerprint / Face ID)</button>
     </form>
+    <p style="text-align:center;margin-top:14px;font-size:0.72rem;color:var(--muted);">
+      No username or email needed — just your PIN.<br>
+      <span id="biometricHint"></span>
+    </p>
   </div>
 </div>
 
@@ -772,6 +773,19 @@
       </div>
 
       <div class="card">
+        <h2>👆 Biometric Login (Fingerprint / Face ID)</h2>
+        <div class="sub">Log in without typing your PIN — use your fingerprint, Face ID, or Windows Hello. Enroll once on this device.</div>
+        <div class="info-box" id="biometricStatusBox">Checking…</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-success" onclick="enrollBiometric()">👆 Enroll Biometric</button>
+          <button class="btn btn-danger" onclick="removeBiometric()">🗑️ Remove Biometric</button>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6;">
+          Works with Touch ID (Mac), Face ID (iPhone), Windows Hello, and Android fingerprint. Requires a secure context (HTTPS or localhost). Your PIN still works as a fallback anytime.
+        </p>
+      </div>
+
+      <div class="card">
         <h2>💾 Data Management</h2>
         <div class="sub">All your data is stored on the server and persists across sessions</div>
         <div class="info-box" id="dataInfo">Loading data summary…</div>
@@ -1006,7 +1020,7 @@ async function saveKey(key, value){
 }
 
 /* ============================================================
-   LOGIN
+   LOGIN — PIN-only (no email) + optional Biometric (WebAuthn)
    ============================================================ */
 document.getElementById('loginForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
@@ -1015,15 +1029,12 @@ document.getElementById('loginForm').addEventListener('submit', async (e)=>{
   errBox.style.display = 'none';
   btn.disabled = true; btn.textContent = 'Logging in…';
   try {
-    const res = await fetch(API+'/auth/login', {
+    const res = await fetch(API+'/auth/pin-login', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        email: document.getElementById('loginEmail').value.trim(),
-        password: document.getElementById('loginPass').value
-      })
+      body: JSON.stringify({ pin: document.getElementById('loginPass').value })
     });
     const data = await res.json();
-    if(!res.ok || !data.user || !data.user.is_admin) throw new Error(data.error || 'Login failed');
+    if(!res.ok || !data.user || !data.user.is_admin) throw new Error(data.error || 'Invalid PIN');
     token = data.token;
     adminUser = data.user;
     localStorage.setItem('sos_admin_token', token);
@@ -1032,9 +1043,142 @@ document.getElementById('loginForm').addEventListener('submit', async (e)=>{
     errBox.textContent = err.message;
     errBox.style.display = 'block';
   } finally {
-    btn.disabled = false; btn.textContent = 'Login';
+    btn.disabled = false; btn.textContent = '🔓 Sign In';
+    document.getElementById('loginPass').value = '';
   }
 });
+
+/* ---------- Biometric (WebAuthn) helpers ---------- */
+function webAuthnSupported(){ return window.PublicKeyCredential && navigator.credentials; }
+
+function bufToB64url(buf){
+  const bytes = new Uint8Array(buf);
+  let str = ''; for (let i=0;i<bytes.length;i++) str += String.fromCharCode(bytes[i]);
+  return btoa(str).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function b64urlToBuf(b64url){
+  const pad = '='.repeat((4 - b64url.length % 4) % 4);
+  const b64 = (b64url + pad).replace(/-/g,'+').replace(/_/g,'/');
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+/* Show/hide biometric button based on enrollment + support */
+async function refreshBiometricUI(){
+  const btn = document.getElementById('biometricBtn');
+  const hint = document.getElementById('biometricHint');
+  const statusBox = document.getElementById('biometricStatusBox');
+  if(!webAuthnSupported()){
+    if(btn) btn.style.display='none';
+    if(hint) hint.textContent='Biometric not supported in this browser.';
+    if(statusBox) statusBox.textContent='⚠️ Biometric (WebAuthn) not supported in this browser. Use a modern browser over HTTPS or localhost.';
+    return;
+  }
+  try {
+    const r = await fetch(API+'/auth/biometric/status');
+    const d = await r.json();
+    if(d.enrolled){
+      if(btn){ btn.style.display='block'; btn.textContent='👆 Use Biometric (Fingerprint / Face ID)'; }
+      if(hint) hint.innerHTML='Biometric enrolled on this server.';
+      if(statusBox) statusBox.innerHTML='✅ <strong>Enrolled.</strong> You can log in with your fingerprint / Face ID. Re-enroll to update.';
+    } else {
+      if(btn) btn.style.display='none';
+      if(hint) hint.innerHTML='No biometric yet. Sign in with your PIN, then enroll from Settings.';
+      if(statusBox) statusBox.innerHTML='⚪ <strong>Not enrolled.</strong> Click “Enroll Biometric” below to enable fingerprint / Face ID login.';
+    }
+  } catch(e){
+    if(btn) btn.style.display='none';
+    if(statusBox) statusBox.textContent='Could not check biometric status.';
+  }
+}
+
+/* Biometric LOGIN (no PIN) */
+document.getElementById('biometricBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('biometricBtn');
+  const errBox = document.getElementById('loginError');
+  errBox.style.display='none';
+  btn.disabled = true; btn.textContent = 'Authenticating…';
+  try {
+    const begin = await fetch(API+'/auth/biometric/login/begin', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    const bd = await begin.json();
+    if(!begin.ok) throw new Error(bd.error || 'Biometric not available');
+    const opts = bd.publicKey;
+    opts.challenge = b64urlToBuf(opts.challenge);
+    if(opts.allowCredentials) opts.allowCredentials.forEach(c=>{ c.id = b64urlToBuf(c.id); });
+    const assertion = await navigator.credentials.get({ publicKey: opts });
+    const aRes = assertion.response;
+    const payload = {
+      challengeId: bd.challengeId,
+      assertion: {
+        id: assertion.id,
+        rawId: bufToB64url(assertion.rawId),
+        response: {
+          authenticatorData: bufToB64url(aRes.authenticatorData),
+          clientDataJSON: bufToB64url(aRes.clientDataJSON),
+          signature: bufToB64url(aRes.signature),
+          userHandle: aRes.userHandle ? bufToB64url(aRes.userHandle) : null
+        }
+      }
+    };
+    const fin = await fetch(API+'/auth/biometric/login/finish', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const fd = await fin.json();
+    if(!fin.ok) throw new Error(fd.error || 'Biometric verification failed');
+    token = fd.token; adminUser = fd.user;
+    localStorage.setItem('sos_admin_token', token);
+    showDashboard();
+  } catch(err){
+    errBox.textContent = 'Biometric: ' + (err.message || err.name || 'failed');
+    errBox.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent='👆 Use Biometric (Fingerprint / Face ID)';
+  }
+});
+
+/* Enroll biometrics — called from dashboard after PIN login */
+async function enrollBiometric(){
+  if(!webAuthnSupported()){ alert('Biometric (WebAuthn) not supported in this browser.'); return; }
+  if(!token){ alert('Sign in with your PIN first, then enroll biometrics.'); return; }
+  try {
+    const begin = await fetch(API+'/auth/biometric/register/begin', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
+    const bd = await begin.json();
+    if(!begin.ok) throw new Error(bd.error || 'Could not start enrollment');
+    const opts = bd.publicKey;
+    opts.challenge = b64urlToBuf(opts.challenge);
+    opts.user.id = b64urlToBuf(opts.user.id);
+    const cred = await navigator.credentials.create({ publicKey: opts });
+    const cRes = cred.response;
+    const payload = {
+      challengeId: bd.challengeId,
+      credential: {
+        id: cred.id,
+        rawId: bufToB64url(cred.rawId),
+        response: {
+          attestationObject: bufToB64url(cRes.attestationObject),
+          clientDataJSON: bufToB64url(cRes.clientDataJSON),
+          publicKey: cRes.getPublicKey ? bufToB64url(cRes.getPublicKey()) : null
+        }
+      }
+    };
+    const fin = await fetch(API+'/auth/biometric/register/finish', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body: JSON.stringify(payload) });
+    const fd = await fin.json();
+    if(!fin.ok) throw new Error(fd.error || 'Enrollment failed');
+    alert('✅ Biometric enrolled! Next time you can log in with your fingerprint / Face ID.');
+    refreshBiometricUI();
+  } catch(err){
+    alert('Enrollment failed: ' + (err.message || err.name || 'unknown'));
+  }
+}
+window.enrollBiometric = enrollBiometric;
+
+async function removeBiometric(){
+  if(!confirm('Remove biometric login? You will need your PIN to sign in afterwards.')) return;
+  await fetch(API+'/auth/biometric', { method:'DELETE', headers:{'Authorization':'Bearer '+token} });
+  refreshBiometricUI();
+  alert('Biometric removed.');
+}
+window.removeBiometric = removeBiometric;
 
 function showDashboard(){
   document.getElementById('loginScreen').style.display = 'none';
@@ -1046,6 +1190,7 @@ function showDashboard(){
   loadOverview();
   loadTxLog();
   loadEmailLog();
+  refreshBiometricUI();
 }
 
 function logout(){
@@ -2243,6 +2388,7 @@ function renderAll(){
 /* Init */
 renderPresets();
 tryAutoLogin();
+refreshBiometricUI();
 
 })();
 </script>

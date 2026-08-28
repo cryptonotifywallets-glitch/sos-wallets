@@ -53,6 +53,7 @@ const K = {
   set:    'nw_settings',
   users:  'nw_users',
   session:'nw_session',
+  biometric:'nw_biometric',
   prices: 'nw_prices',
   tmpl:   'nw_tmpl_',
   emailjs:'nw_emailjs_',
@@ -112,48 +113,116 @@ function toast(type,title,msg){
 }
 
 /* ============================================================
-   LOGIN SYSTEM
+   LOGIN SYSTEM — PIN-only (no email/username) + Biometric
    ============================================================ */
 function switchLoginTab(tab){
-  document.getElementById('lt-login').classList.toggle('active',tab==='login');
-  document.getElementById('lt-register').classList.toggle('active',tab==='register');
-  document.getElementById('login-form').classList.toggle('hidden',tab!=='login');
-  document.getElementById('register-form').classList.toggle('hidden',tab!=='register');
+  document.getElementById('login-form').classList.toggle('hidden', tab!=='login');
+  document.getElementById('register-form').classList.toggle('hidden', tab!=='setup');
 }
 
 function getUsers(){ try{return JSON.parse(localStorage.getItem(K.users)||'[]');}catch(e){return [];} }
 function setUsers(u){ localStorage.setItem(K.users,JSON.stringify(u)); }
 
+/* Single-user app: the first/only account. No email needed. */
+function getAccount(){ const u=getUsers(); return u[0]||null; }
+
+/* Create / change PIN — replaces the old register flow */
 function doRegister(){
-  const name=document.getElementById('reg-name').value.trim();
-  const email=document.getElementById('reg-email').value.trim().toLowerCase();
   const pass=document.getElementById('reg-pass').value;
   const pass2=document.getElementById('reg-pass2').value;
-  if(!name||!email||!pass){toast('error','Missing Fields','Fill in all fields.');return;}
-  if(pass.length<6){toast('error','Weak Password','Password must be at least 6 characters.');return;}
-  if(pass!==pass2){toast('error','Password Mismatch','Passwords do not match.');return;}
-  const users=getUsers();
-  if(users.find(u=>u.email===email)){toast('error','Account Exists','An account with this email already exists. Sign in instead.');return;}
-  users.push({name,email,password:hashStr(pass),createdAt:Date.now()});
-  setUsers(users);
-  toast('success','Account Created','Welcome, '+name+'! Signing you in...');
-  // auto login
-  currentUser={name,email};
+  if(!pass){toast('error','Missing PIN','Enter a PIN.');return;}
+  if(pass.length<4){toast('error','PIN too short','PIN must be at least 4 characters.');return;}
+  if(pass!==pass2){toast('error','PIN Mismatch','PINs do not match.');return;}
+  const existing=getAccount();
+  const account={name:'Owner', email:'local@device', password:hashStr(pass), createdAt:Date.now()};
+  if(existing){ account.createdAt=existing.createdAt; }
+  setUsers([account]); // single user
+  toast('success','PIN Saved','Your PIN is set. Signing you in…');
+  currentUser={name:account.name,email:account.email};
   if(settings.autologin) localStorage.setItem(K.session,JSON.stringify(currentUser));
   enterApp();
 }
 
 function doLogin(){
-  const email=document.getElementById('login-email').value.trim().toLowerCase();
   const pass=document.getElementById('login-pass').value;
-  if(!email||!pass){toast('error','Missing Fields','Enter email and password.');return;}
-  const users=getUsers();
-  const user=users.find(u=>u.email===email && u.password===hashStr(pass));
-  if(!user){toast('error','Login Failed','Invalid email or password.');return;}
-  currentUser={name:user.name,email:user.email};
+  if(!pass){toast('error','Missing PIN','Enter your PIN.');return;}
+  const account=getAccount();
+  if(!account){toast('error','No PIN Set','No PIN found on this device. Create a PIN first.');switchLoginTab('setup');return;}
+  if(account.password!==hashStr(pass)){toast('error','Login Failed','Invalid PIN.');return;}
+  currentUser={name:account.name,email:account.email};
   if(settings.autologin) localStorage.setItem(K.session,JSON.stringify(currentUser));
-  toast('success','Welcome Back','Signed in as '+user.name);
+  toast('success','Welcome Back','Signed in.');
   enterApp();
+}
+
+/* ---------- Biometric (WebAuthn) — client-side ---------- */
+function webAuthnSupported(){ return window.PublicKeyCredential && navigator.credentials; }
+
+function bufToB64url(buf){
+  const bytes=new Uint8Array(buf); let s=''; for(let i=0;i<bytes.length;i++) s+=String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function b64urlToBuf(b64url){
+  const pad='='.repeat((4-b64url.length%4)%4);
+  const b64=(b64url+pad).replace(/-/g,'+').replace(/_/g,'/');
+  const bin=atob(b64); const bytes=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+/* Show biometric button only if an account + WebAuthn enrollment exists */
+async function refreshBiometricUI(){
+  const btn=document.getElementById('biometricBtn');
+  const hint=document.getElementById('login-hint');
+  if(!btn) return;
+  if(!webAuthnSupported()){ btn.style.display='none'; return; }
+  if(!getAccount()){ btn.style.display='none'; if(hint) hint.innerHTML='First time? Create a PIN below.'; return; }
+  const enrolled=!!localStorage.getItem(K.biometric);
+  btn.style.display = enrolled ? 'block' : 'none';
+  if(hint) hint.innerHTML = enrolled ? 'Or use your PIN above.' : 'First time? Create a PIN below.';
+}
+
+/* Enroll biometric on this device (requires being logged in / PIN set) */
+async function enrollBiometric(){
+  if(!webAuthnSupported()){toast('error','Not Supported','Biometric not supported in this browser.');return;}
+  if(!getAccount()){toast('error','No PIN','Create a PIN first.');return;}
+  try{
+    const challenge=new Uint8Array(32); crypto.getRandomValues(challenge);
+    const userId=new Uint8Array(16); crypto.getRandomValues(userId);
+    const cred=await navigator.credentials.create({ publicKey:{
+      challenge,
+      rp:{ name:'SOS WALLETS', id:location.hostname },
+      user:{ id:userId, name:'owner', displayName:'SOS WALLETS Owner' },
+      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+      authenticatorSelection:{ userVerification:'preferred', residentKey:'preferred' },
+      timeout:60000, attestation:'none'
+    }});
+    localStorage.setItem(K.biometric, cred.id); // store credential id as the enrollment marker
+    toast('success','Biometric Enrolled','You can now log in with fingerprint / Face ID.');
+    refreshBiometricUI();
+  }catch(e){ toast('error','Enrollment Failed', e.message||e.name||'cancelled'); }
+}
+
+/* Log in with biometrics — proves user presence, then unlocks the app */
+async function biometricLogin(){
+  if(!webAuthnSupported())return;
+  const account=getAccount();
+  if(!account){toast('error','No PIN','Create a PIN first.');return;}
+  const credId=localStorage.getItem(K.biometric);
+  if(!credId){toast('error','Not Enrolled','Enroll biometrics from Settings first.');return;}
+  try{
+    const challenge=new Uint8Array(32); crypto.getRandomValues(challenge);
+    await navigator.credentials.get({ publicKey:{
+      challenge,
+      rpId:location.hostname,
+      allowCredentials:[{ type:'public-key', id:b64urlToBuf(credId) }],
+      userVerification:'preferred', timeout:60000
+    }});
+    currentUser={name:account.name,email:account.email};
+    if(settings.autologin) localStorage.setItem(K.session,JSON.stringify(currentUser));
+    toast('success','Welcome Back','Signed in with biometric.');
+    enterApp();
+  }catch(e){ toast('error','Biometric Failed', e.message||e.name||'cancelled'); }
 }
 
 function logout(){
@@ -162,22 +231,34 @@ function logout(){
   localStorage.removeItem(K.session);
   document.getElementById('main-app').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
-  document.getElementById('login-email').value='';
   document.getElementById('login-pass').value='';
+  refreshBiometricUI();
   toast('info','Logged Out','Come back soon!');
 }
 
+/* Remove biometric enrollment on this device */
+function removeBiometric(){
+  if(!localStorage.getItem(K.biometric)){toast('info','Not Enrolled','No biometric to remove.');return;}
+  if(!confirm('Remove biometric login from this device? You will sign in with your PIN from now on.'))return;
+  localStorage.removeItem(K.biometric);
+  toast('success','Biometric Removed','Use your PIN to sign in.');
+  refreshBiometricUI();
+}
+window.enrollBiometric=enrollBiometric;
+window.biometricLogin=biometricLogin;
+window.removeBiometric=removeBiometric;
+
 function resetLoginData(){
-  if(!confirm('Reset ALL login details? This will delete every account and session in this browser and log you out. This cannot be undone.'))return;
-  // remove all user-scoped keys + account store + session
+  if(!confirm('Reset ALL login details? This will delete your PIN, biometric enrollment, and sessions in this browser. This cannot be undone.'))return;
   Object.keys(localStorage).forEach(k=>{
-    if(k.startsWith(K.sim)||k.startsWith(K.addr)||k.startsWith(K.notif)||k.startsWith(K.tmpl)||k===K.users||k===K.session) localStorage.removeItem(k);
+    if(k.startsWith(K.sim)||k.startsWith(K.addr)||k.startsWith(K.notif)||k.startsWith(K.tmpl)||k===K.users||k===K.session||k===K.biometric) localStorage.removeItem(k);
   });
   currentUser=null;
   setUsers([]);
-  toast('success','Login Data Reset','All accounts and sessions cleared.');
+  toast('success','Login Data Reset','PIN, biometric & sessions cleared.');
   document.getElementById('main-app').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
+  refreshBiometricUI();
 }
 
 function enterApp(){
@@ -2564,6 +2645,7 @@ function init(){
   applyTheme();
   if(!checkSession()){
     document.getElementById('login-screen').classList.remove('hidden');
+    refreshBiometricUI();
   }
 }
 
