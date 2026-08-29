@@ -188,9 +188,21 @@ function newTrackingToken() {
   return crypto.randomBytes(9).toString('base64url'); // ~12 char URL-safe token
 }
 
-function publicBaseUrl() {
+function publicBaseUrl(req) {
   // Prefer the deployment URL env var, then x-forwarded host, then request host
-  return process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '';
+  if (process.env.RENDER_EXTERNAL_URL) return process.env.RENDER_EXTERNAL_URL;
+  if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL;
+  // Derive from request headers (works on Railway, Fly.io, Heroku, etc.)
+  if (req) {
+    const proto = (req.get('x-forwarded-proto') || req.protocol || 'https').split(',')[0].trim();
+    const host = req.get('x-forwarded-host') || req.get('host') || req.get('origin') || '';
+    if (host) {
+      // origin header may include the protocol, strip it
+      const cleanHost = host.replace(/^https?:\/\//, '').split('/')[0];
+      return `${proto}://${cleanHost}`;
+    }
+  }
+  return '';
 }
 
 function trackingRowToObj(row) {
@@ -917,7 +929,7 @@ app.post('/api/trackings', adminAuth, (req, res) => {
             fromAddr || '', toAddr || '', txHash || '', explorer || '', memo || '', initialStatus);
     const id = info.lastInsertRowid;
     logStatusChange(id, initialStatus, 'Tracking link created');
-    const base = publicBaseUrl();
+    const base = publicBaseUrl(req);
     const url = base ? `${base.replace(/\/$/, '')}/track/${token}` : `/track/${token}`;
     res.json({ ok: true, id, token, url, status: initialStatus });
   } catch (e) {
@@ -932,7 +944,7 @@ app.get('/api/trackings', adminAuth, (req, res) => {
       SELECT t.*, (SELECT COUNT(*) FROM tracking_views v WHERE v.tracking_id = t.id) AS view_count,
              (SELECT MAX(v.viewed_at) FROM tracking_views v WHERE v.tracking_id = t.id) AS last_viewed
       FROM trackings t WHERE t.user_id = ? ORDER BY t.created_at DESC`).all(req.user.id);
-    const base = publicBaseUrl();
+    const base = publicBaseUrl(req);
     const list = rows.map(r => {
       const o = trackingRowToObj(r);
       o.viewCount = r.view_count || 0;
@@ -953,7 +965,7 @@ app.get('/api/trackings/:id', adminAuth, (req, res) => {
     if (!row) return res.status(404).json({ error: 'Tracking not found' });
     const history = db.prepare('SELECT status, note, ts FROM tracking_status_log WHERE tracking_id = ? ORDER BY ts ASC').all(row.id);
     const views = db.prepare('SELECT viewed_at, ip, user_agent FROM tracking_views WHERE tracking_id = ? ORDER BY viewed_at DESC LIMIT 50').all(row.id);
-    const base = publicBaseUrl();
+    const base = publicBaseUrl(req);
     const obj = trackingRowToObj(row);
     obj.url = base ? `${base.replace(/\/$/, '')}/track/${row.token}` : `/track/${row.token}`;
     obj.history = history;
